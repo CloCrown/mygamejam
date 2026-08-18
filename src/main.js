@@ -1,69 +1,37 @@
 import { init, GameLoop } from 'kontra';
-import { EVENTS } from './data/events.js';
-import { createMashEvent } from './mechanics/mash.js';
+import { createHomeScreen } from './screens/home.js';
+import { createOptionsScreen } from './screens/options.js';
+import { createMultiScreen } from './screens/multi.js';
+import { createSoloRunScreen } from './screens/soloRun.js';
+import { drawBackground } from './background.js';
 
 const { canvas } = init();
 const ctx = canvas.getContext('2d');
 
-const state = {
-  screen: 'menu',
-  eventIndex: 0,
-  lastResult: null,
-};
+let screen = null;
+let elapsed = 0;
 
-let activeEvent = null;
-
-function startEvent(index) {
-  state.eventIndex = index;
-  const cfg = EVENTS[index];
-  activeEvent = createMashEvent(cfg, canvas, onEventComplete);
-  state.screen = 'event';
-}
-
-function onEventComplete(result) {
-  state.lastResult = result;
-  state.screen = 'result';
+function goTo(name) {
+  if (name === 'home') screen = createHomeScreen(canvas, goTo);
+  else if (name === 'options') screen = createOptionsScreen(canvas, goTo);
+  else if (name === 'multi') screen = createMultiScreen(canvas, goTo);
+  else if (name === 'solo') screen = createSoloRunScreen(canvas, goTo);
 }
 
 window.addEventListener('keydown', (e) => {
-  if (e.repeat) return;
-  if (state.screen === 'menu' && e.code === 'Enter') {
-    startEvent(0);
-  } else if (state.screen === 'result' && e.code === 'Enter') {
-    activeEvent = null;
-    state.screen = 'menu';
-  }
+  if (screen && screen.onKeyDown) screen.onKeyDown(e);
 });
 
-function renderMenu() {
-  ctx.fillStyle = '#fff';
-  ctx.font = '24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Unicorn Games', canvas.width / 2, 80);
-  ctx.font = '14px sans-serif';
-  ctx.fillText('Entree pour commencer: ' + EVENTS[0].name, canvas.width / 2, 120);
-}
-
-function renderResult() {
-  ctx.fillStyle = '#fff';
-  ctx.font = '20px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Score: ' + Math.round(state.lastResult.score), canvas.width / 2, 100);
-  ctx.font = '14px sans-serif';
-  ctx.fillText('Entree pour revenir au menu', canvas.width / 2, 140);
-}
+goTo('home');
 
 const loop = GameLoop({
   update(dt) {
-    if (state.screen === 'event' && activeEvent) {
-      activeEvent.update(dt);
-    }
+    elapsed += dt;
+    if (screen && screen.update) screen.update(dt);
   },
   render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (state.screen === 'menu') renderMenu();
-    else if (state.screen === 'event' && activeEvent) activeEvent.render(ctx);
-    else if (state.screen === 'result') renderResult();
+    drawBackground(ctx, canvas, elapsed);
+    if (screen && screen.render) screen.render(ctx);
   },
 });
 
