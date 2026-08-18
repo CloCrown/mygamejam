@@ -1,0 +1,31 @@
+{
+  "name": "mygamejam",
+  "version": "1.0.0",
+  "description": "Projet pour le [js13kgames](https://js13kgames.com/) 2026.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --outfile=dist/bundle.js",
+    "watch": "esbuild src/main.js --bundle --outfile=dist/bundle.js --watch",
+    "serve": "node scripts/serve.js 8080",
+    "zip": "npm run build && node scripts/zip.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CloCrown/mygamejam.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/CloCrown/mygamejam/issues"
+  },
+  "homepage": "https://github.com/CloCrown/mygamejam#readme",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "^1.62.1"
+  },
+  "dependencies": {
+    "kontra": "^10.0.2"
+  }
+}
