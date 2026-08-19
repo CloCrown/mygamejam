@@ -1,4 +1,4 @@
-import { getKey } from '../keybinds.js';
+import { getKey } from '../playerConfig.js';
 import { drawUnicorn } from '../unicorn.js';
 
 const TRACK_X0 = 60;

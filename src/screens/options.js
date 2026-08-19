@@ -1,6 +1,12 @@
-import { getKey, setKey, getActions } from '../keybinds.js';
+import { getKey, setKey, getActions } from '../playerConfig.js';
 
-const LABELS = { left: 'Gauche', right: 'Droite' };
+const LABELS = {
+  forward: 'Avancer',
+  backward: 'Reculer',
+  left: 'Gauche',
+  right: 'Droite',
+  jump: 'Sauter',
+};
 
 export function createOptionsScreen(canvas, goTo) {
   const actions = getActions();
@@ -30,7 +36,7 @@ export function createOptionsScreen(canvas, goTo) {
 
     ctx.font = '16px sans-serif';
     actions.forEach((action, i) => {
-      const y = 100 + i * 36;
+      const y = 90 + i * 28;
       const selected = i === index;
       ctx.fillStyle = selected ? '#ffd54f' : '#fff';
       const keyLabel = selected && listening ? '...' : getKey(action);
@@ -39,7 +45,7 @@ export function createOptionsScreen(canvas, goTo) {
 
     ctx.fillStyle = '#aaa';
     ctx.font = '12px sans-serif';
-    ctx.fillText('Entree pour changer, Echap pour revenir', canvas.width / 2, 220);
+    ctx.fillText('Entree pour changer, Echap pour revenir', canvas.width / 2, 245);
   }
 
   return { onKeyDown, update, render };
