@@ -2,6 +2,7 @@ import { init, GameLoop } from 'kontra';
 import { createHomeScreen } from './screens/home.js';
 import { createOptionsScreen } from './screens/options.js';
 import { createMultiScreen } from './screens/multi.js';
+import { createSoloMenuScreen } from './screens/soloMenu.js';
 import { createSoloRunScreen } from './screens/soloRun.js';
 import { drawBackground } from './background.js';
 
@@ -11,11 +12,12 @@ const ctx = canvas.getContext('2d');
 let screen = null;
 let elapsed = 0;
 
-function goTo(name) {
+function goTo(name, payload) {
   if (name === 'home') screen = createHomeScreen(canvas, goTo);
   else if (name === 'options') screen = createOptionsScreen(canvas, goTo);
   else if (name === 'multi') screen = createMultiScreen(canvas, goTo);
-  else if (name === 'solo') screen = createSoloRunScreen(canvas, goTo);
+  else if (name === 'solo') screen = createSoloMenuScreen(canvas, goTo);
+  else if (name === 'soloPlay') screen = createSoloRunScreen(canvas, goTo, payload);
 }
 
 window.addEventListener('keydown', (e) => {

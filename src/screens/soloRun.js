@@ -1,42 +1,27 @@
 import { EVENTS } from '../data/events.js';
-import { createMashEvent } from '../mechanics/mash.js';
+import { FACTORIES } from '../mechanics/index.js';
 import { localPlayer } from '../player.js';
 
-const FACTORIES = { mash: createMashEvent };
-
-export function createSoloRunScreen(canvas, goTo) {
-  const playable = EVENTS.filter((e) => FACTORIES[e.mechanic]);
-  let i = 0;
+export function createSoloRunScreen(canvas, goTo, eventKey) {
+  const cfg = EVENTS.find((e) => e.key === eventKey);
   let phase = 'playing';
   let result = null;
   let isNewRecord = false;
-  let current = null;
-
-  function startCurrent() {
-    const cfg = playable[i];
-    current = FACTORIES[cfg.mechanic](cfg, canvas, onComplete);
-    phase = 'playing';
-  }
+  const current = FACTORIES[cfg.mechanic](cfg, canvas, onComplete);
 
   function onComplete(res) {
     result = res;
-    isNewRecord = localPlayer.setResult(playable[i].key, res.score);
+    isNewRecord = localPlayer.setResult(cfg.key, res.score);
     phase = 'result';
   }
-
-  startCurrent();
 
   function onKeyDown(e) {
     if (e.repeat) return;
     if (e.code === 'Escape') {
-      goTo('home');
+      goTo('solo');
       return;
     }
-    if (phase === 'result' && e.code === 'Enter') {
-      i++;
-      if (i >= playable.length) goTo('home');
-      else startCurrent();
-    }
+    if (phase === 'result' && e.code === 'Enter') goTo('solo');
   }
 
   function update(dt) {
@@ -54,7 +39,7 @@ export function createSoloRunScreen(canvas, goTo) {
     ctx.fillText('Score: ' + Math.round(result.score), canvas.width / 2, 100);
 
     ctx.font = '14px sans-serif';
-    const record = localPlayer.getRecord(playable[i].key);
+    const record = localPlayer.getRecord(cfg.key);
     ctx.fillStyle = isNewRecord ? '#ffd54f' : '#fff';
     ctx.fillText(
       isNewRecord ? 'Nouveau record !' : 'Record: ' + Math.round(record),
@@ -63,7 +48,7 @@ export function createSoloRunScreen(canvas, goTo) {
     );
 
     ctx.fillStyle = '#fff';
-    ctx.fillText('Entree pour continuer', canvas.width / 2, 165);
+    ctx.fillText('Entree pour revenir aux epreuves', canvas.width / 2, 165);
   }
 
   return { onKeyDown, update, render };

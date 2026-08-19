@@ -49,3 +49,64 @@ export function drawUnicorn(ctx, x, y, opts = {}) {
 
   ctx.restore();
 }
+
+export function drawUnicornTop(ctx, x, y, opts = {}) {
+  const { scale = 1, body = '#fff', accent = '#e53935', heading = 0, boosting = false } = opts;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  ctx.scale(scale, scale);
+
+  if (boosting) {
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-14, -5);
+    ctx.lineTo(-27, 0);
+    ctx.lineTo(-14, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  [[-8, -7], [-8, 7], [8, -7], [8, 7]].forEach(([lx, ly]) => {
+    ctx.beginPath();
+    ctx.ellipse(lx, ly, 3, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-13, 0);
+  ctx.quadraticCurveTo(-22, boosting ? 0 : 4, -18, boosting ? -4 : 10);
+  ctx.stroke();
+
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 15, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(15, 0, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.moveTo(19, -2);
+  ctx.lineTo(28, 0);
+  ctx.lineTo(19, 2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(4, -6);
+  ctx.quadraticCurveTo(-4, -10, -10, -5);
+  ctx.stroke();
+
+  ctx.restore();
+}
