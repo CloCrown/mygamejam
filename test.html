@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test</title>
+</head>
+<body style="margin:0">
+<canvas id="c"></canvas>
+<div id="labels" style="position:fixed;top:0;left:0;font:bold 14px sans-serif;pointer-events:none"></div>
+<script>
+"use strict";
+
+const C = document.getElementById("c");
+C.width = innerWidth;
+C.height = innerHeight;
+const gl = C.getContext("webgl");
+
+// -- Shader avec couleur par sommet --
+const vsSource = `
+attribute vec2 aPos;
+attribute vec3 aCol;
+varying vec3 vCol;
+void main() {
+  vCol = aCol;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const fsSource = `
+precision mediump float;
+varying vec3 vCol;
+void main() {
+  gl_FragColor = vec4(vCol, 1.0);
+}`;
+
+// -- Compile + link --
+function compileShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  return s;
+}
+
+const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+
+const program = gl.createProgram();
+gl.attachShader(program, vs);
+gl.attachShader(program, fs);
+gl.linkProgram(program);
+gl.useProgram(program);
+
+const aPos = gl.getAttribLocation(program, "aPos");
+const aCol = gl.getAttribLocation(program, "aCol");
+gl.enableVertexAttribArray(aPos);
+gl.enableVertexAttribArray(aCol);
+
+// -- Draw square --
+const sqHalf = 50 / C.width;
+const sqVerts = new Float32Array([
+  -sqHalf, -sqHalf, 1, 1, 1,
+   sqHalf, -sqHalf, 1, 1, 1,
+   sqHalf,  sqHalf, 1, 1, 1,
+  -sqHalf, -sqHalf, 1, 1, 1,
+   sqHalf,  sqHalf, 1, 1, 1,
+  -sqHalf,  sqHalf, 1, 1, 1,
+]);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, sqVerts, gl.STATIC_DRAW);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 20, 0);
+gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 20, 8);
+
+gl.viewport(0, 0, C.width, C.height);
+gl.clearColor(0.0, 0.0, 0.0, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+// -- Axis helpers (coin bas-gauche) --
+const L = 80; // longueur des axes en px
+const ox = -1 + 40 / C.width;   // origine x en NDC
+const oy = -1 + 40 / C.height;  // origine y en NDC
+const dx = L / C.width;         // 1 axe px en NDC
+const dy = L / C.height;
+
+// X = rouge, Y = vert, Z = bleu (diagonale pour simuler la profondeur)
+const axisVerts = new Float32Array([
+  // X (rouge → droite)
+  ox, oy, 1, 0, 0,  ox + dx, oy, 1, 0, 0,
+  // Y (vert → haut)
+  ox, oy, 0, 1, 0,  ox, oy + dy, 0, 1, 0,
+  // Z (bleu → diagonale haut-droite)
+  ox, oy, 0, 0, 1,  ox + dx * 0.6, oy + dy * 0.6, 0, 0, 1,
+]);
+
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, axisVerts, gl.STATIC_DRAW);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 20, 0);
+gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 20, 8);
+gl.drawArrays(gl.LINES, 0, 6);
+
+// -- Axis labels (DOM, positionnes au bout de chaque axe) --
+// Conversion NDC -> pixels identique a celle utilisee par WebGL pour dessiner les axes.
+function toPx(ndcX, ndcY) {
+  return { x: (ndcX + 1) * 0.5 * C.width, y: (1 - ndcY) * 0.5 * C.height };
+}
+const axisLabels = [
+  { text: "X", color: "#ff3333", ...toPx(ox + dx, oy) },
+  { text: "Y", color: "#33ff33", ...toPx(ox, oy + dy) },
+  { text: "Z", color: "#3388ff", ...toPx(ox + dx * 0.6, oy + dy * 0.6) },
+];
+const labelsEl = document.getElementById("labels");
+axisLabels.forEach(({ text, color, x, y }) => {
+  const el = document.createElement("div");
+  el.textContent = text;
+  el.style.position = "absolute";
+  el.style.left = (x + 3) + "px";
+  el.style.top = (y - 7) + "px";
+  el.style.color = color;
+  labelsEl.appendChild(el);
+});
+
+</script>
+</body>
+</html>
