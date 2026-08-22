@@ -17,11 +17,19 @@ async function build() {
   for (const name of PAGES) {
     const htmlPath = path.join(__dirname, `${name}.html`);
     const cssPath = path.join(__dirname, `${name}.css`);
-    const jsPath = path.join(__dirname, `${name}.js`);
 
-    const js = fs.existsSync(jsPath) ? fs.readFileSync(jsPath, "utf8") : "";
     const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
     let html = fs.readFileSync(htmlPath, "utf8");
+
+    // Collect every local <script src="*.js"> tag, in document order, and
+    // concatenate their sources. This lets a page split its JS across
+    // several files (e.g. gl-utils.js, track.js, unicorn-rig.js, game.js)
+    // for readability while still shipping as one inlined+minified script.
+    const scriptTagRe = /<script[^>]*src=["']([^"']+\.js)["'][^>]*><\/script>/g;
+    const scriptTags = [...html.matchAll(scriptTagRe)];
+    const js = scriptTags
+      .map((match) => fs.readFileSync(path.join(__dirname, match[1]), "utf8"))
+      .join("\n");
 
     let minJs = "";
     if (js) {
@@ -43,10 +51,12 @@ async function build() {
       );
     }
     if (minJs) {
-      html = html.replace(
-        /<script[^>]*src=["'][^"']*\.js["'][^>]*><\/script>/,
-        `<script>${minJs}</script>`
-      );
+      let inlined = false;
+      html = html.replace(scriptTagRe, () => {
+        if (inlined) return "";
+        inlined = true;
+        return `<script>${minJs}</script>`;
+      });
     }
 
     html = await minifyHtml(html, {
