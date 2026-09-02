@@ -59,11 +59,21 @@ function main() {
   };
 
   var MOVE_SPEED = 12; // meters/sec
-  var TURN_SPEED = 1.5; // radians/sec, how fast A/D turn the heading
 
   var keys = {};
   window.addEventListener("keydown", function(e) { keys[e.key.toLowerCase()] = true; });
   window.addEventListener("keyup", function(e) { keys[e.key.toLowerCase()] = false; });
+
+  // Fortnite-style look: pointer lock captures the mouse so its relative
+  // movement (not screen position) steers the unicorn's heading directly,
+  // with the camera always following behind it.
+  var MOUSE_SENSITIVITY = 0.0025;
+  canvas.addEventListener("click", function() { canvas.requestPointerLock(); });
+  window.addEventListener("mousemove", function(e) {
+    if (document.pointerLockElement === canvas) {
+      player.heading -= e.movementX * MOUSE_SENSITIVITY;
+    }
+  });
 
   function resizeCanvasToDisplaySize(canvas) {
     var width = canvas.clientWidth;
@@ -97,18 +107,20 @@ function main() {
     gl.clearColor(0.6, 0.8, 0.95, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    // ---- Movement: vehicle-style. W/S drive forward/back along the
-    // unicorn's current heading, A/D turn that heading in place. ----
-    var throttle = 0;
+    // ---- Movement: W/S drive forward/back along the unicorn's current
+    // heading, A/D strafe sideways (relative to heading) without turning it. ----
+    var throttle = 0, strafe = 0;
     if (keys["w"] || keys["arrowup"]) throttle += 1;
     if (keys["s"] || keys["arrowdown"]) throttle -= 1;
-    if (keys["a"] || keys["arrowleft"]) player.heading += TURN_SPEED * dt;
-    if (keys["d"] || keys["arrowright"]) player.heading -= TURN_SPEED * dt;
+    if (keys["a"] || keys["arrowleft"]) strafe -= 1;
+    if (keys["d"] || keys["arrowright"]) strafe += 1;
 
-    var moving = throttle !== 0;
+    var moving = throttle !== 0 || strafe !== 0;
     if (moving) {
       player.x += Math.sin(player.heading) * throttle * MOVE_SPEED * dt;
       player.z += Math.cos(player.heading) * throttle * MOVE_SPEED * dt;
+      player.x += Math.cos(player.heading) * strafe * MOVE_SPEED * dt;
+      player.z -= Math.sin(player.heading) * strafe * MOVE_SPEED * dt;
     }
 
     var mapHalf = (MAP_SIZE / 2) * CELL;
@@ -141,11 +153,12 @@ function main() {
     var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
     var projectionMatrix = m4.perspective(fieldOfViewRadians, aspect, 0.5, 800);
 
-    var camDist = 9, camHeight = 4.5;
+    var camDist = 14, camHeight = 6.5;
+    var camAngle = player.heading;
     var cameraPosition = [
-      player.x - Math.sin(player.heading) * camDist,
+      player.x - Math.sin(camAngle) * camDist,
       camHeight,
-      player.z - Math.cos(player.heading) * camDist,
+      player.z - Math.cos(camAngle) * camDist,
     ];
     var target = [player.x, 1.5, player.z];
     var up = [0, 1, 0];

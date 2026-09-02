@@ -7,7 +7,7 @@
 
 var MAP_SIZE = 400;
 var CELL = 1;
-var TRACK_WIDTH = 12; // cell units
+var TRACK_WIDTH = 36; // cell units
 
 // Waypoints (in cell units, grid-centered) tracing a slalom-like loop.
 // The path is closed: the last point connects back to the first.

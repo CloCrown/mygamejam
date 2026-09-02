@@ -8,15 +8,16 @@ const { minify: minifyHtml } = require("html-minifier-terser");
 const CleanCSS = require("clean-css");
 
 const DIST = path.join(__dirname, "dist");
-const PAGES = ["human", "unicorn", "game"]; // add more page basenames (page.html/css/js) here as they're ready
+const GAME_DIR = path.join(__dirname, "game");
+const PAGES = ["game"]; // add more page basenames (page.html/css/js in game/) here as they're ready
 
 async function build() {
   fs.rmSync(DIST, { recursive: true, force: true });
   fs.mkdirSync(DIST);
 
   for (const name of PAGES) {
-    const htmlPath = path.join(__dirname, `${name}.html`);
-    const cssPath = path.join(__dirname, `${name}.css`);
+    const htmlPath = path.join(GAME_DIR, `${name}.html`);
+    const cssPath = path.join(GAME_DIR, `${name}.css`);
 
     const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
     let html = fs.readFileSync(htmlPath, "utf8");
@@ -28,7 +29,7 @@ async function build() {
     const scriptTagRe = /<script[^>]*src=["']([^"']+\.js)["'][^>]*><\/script>/g;
     const scriptTags = [...html.matchAll(scriptTagRe)];
     const js = scriptTags
-      .map((match) => fs.readFileSync(path.join(__dirname, match[1]), "utf8"))
+      .map((match) => fs.readFileSync(path.join(GAME_DIR, match[1]), "utf8"))
       .join("\n");
 
     let minJs = "";
