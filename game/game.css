@@ -1,8 +1,52 @@
 body {
   margin: 0;
+  font-family: system-ui, sans-serif;
 }
 canvas {
   width: 100vw;
   height: 100vh;
-  display: block;
+  display: none;
+}
+#track-menu {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #223;
+  color: #fff;
+}
+#track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#track-list button {
+  font-size: 18px;
+  padding: 10px 24px;
+  cursor: pointer;
+}
+#timer {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 28px;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 0 4px #000, 0 0 8px #000;
+  display: none;
+}
+#minimap {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  width: 160px;
+  height: 160px;
+  background: rgba(20, 20, 30, 0.55);
+  border: 2px solid #fff;
+  border-radius: 8px;
+  display: none;
 }

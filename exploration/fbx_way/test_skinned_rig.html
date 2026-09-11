@@ -1,0 +1,124 @@
+<!-- Standalone test page for the experimental skinned rig
+     (game/horse-rig-skinned.js + game/horse-mesh-skinned.js). Not part of
+     the shipped game; open directly to compare against the rigid-part rig
+     without touching game.html. Serve game/ and this file together, e.g.:
+       cd exploration/fbx_way && npx http-server -p 8085 ..
+     then open http://localhost:8085/fbx_way/test_skinned_rig.html -->
+<canvas id="canvas" style="width:100vw;height:100vh;display:block;background:#8cc8f2"></canvas>
+<script id="vertex-shader-3d" type="x-shader/x-vertex">
+attribute vec4 a_position;
+attribute vec4 a_color;
+attribute vec2 a_texcoord;
+uniform mat4 u_matrix;
+varying vec4 v_color;
+varying vec2 v_texcoord;
+void main() {
+  gl_Position = u_matrix * a_position;
+  v_color = a_color;
+  v_texcoord = a_texcoord;
+}
+</script>
+<script id="fragment-shader-3d" type="x-shader/x-fragment">
+precision mediump float;
+varying vec4 v_color;
+varying vec2 v_texcoord;
+uniform vec4 u_colorMult;
+uniform vec4 u_colorOffset;
+uniform sampler2D u_texture;
+uniform float u_useTexture;
+void main() {
+  vec4 baseColor = mix(v_color, texture2D(u_texture, v_texcoord), u_useTexture);
+  gl_FragColor = baseColor * u_colorMult + u_colorOffset;
+}
+</script>
+<script src="../../game/gl-utils.js"></script>
+<script src="../../game/horse-mesh-skinned.js"></script>
+<script src="../../game/horse-rig-skinned.js"></script>
+<script>
+"use strict";
+var canvas = document.querySelector("#canvas");
+var gl = canvas.getContext("webgl");
+
+var program = createProgram(gl,
+  document.querySelector("#vertex-shader-3d").text,
+  document.querySelector("#fragment-shader-3d").text);
+var positionLoc = gl.getAttribLocation(program, "a_position");
+var colorLoc = gl.getAttribLocation(program, "a_color");
+var texcoordLoc = gl.getAttribLocation(program, "a_texcoord");
+var matrixLoc = gl.getUniformLocation(program, "u_matrix");
+var colorMultLoc = gl.getUniformLocation(program, "u_colorMult");
+var colorOffsetLoc = gl.getUniformLocation(program, "u_colorOffset");
+var useTextureLoc = gl.getUniformLocation(program, "u_useTexture");
+
+var horse = createHorseRigSkinned(gl);
+
+var HORSE_SCALE = 2.2;
+var playerRoot = new Node(new TRS());
+horse.root.setParent(playerRoot);
+playerRoot.source.scale = [HORSE_SCALE, HORSE_SCALE, HORSE_SCALE];
+
+window.__debugCamAngle = Math.PI / 2;
+window.__debugCamDist = 3.2;
+window.__debugGait = 1;
+window.__debugCamHeight = 1.5;
+window.__debugCamTargetY = 1.5;
+
+function resize() {
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+}
+
+gl.useProgram(program);
+gl.enableVertexAttribArray(positionLoc);
+gl.enableVertexAttribArray(colorLoc);
+gl.enableVertexAttribArray(texcoordLoc);
+
+function drawScene(timeMs) {
+  var time = timeMs * 0.001;
+  resize();
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.enable(gl.CULL_FACE);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.55, 0.78, 0.95, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  horse.animate(time, window.__debugGait);
+  playerRoot.updateWorldMatrix();
+
+  var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+  var projectionMatrix = m4.perspective(60 * Math.PI / 180, aspect, 0.1, 200);
+  var camAngle = window.__debugCamAngle;
+  var camDist = window.__debugCamDist;
+  var camHeight = window.__debugCamHeight !== undefined ? window.__debugCamHeight : 1.8;
+  var targetY = window.__debugCamTargetY !== undefined ? window.__debugCamTargetY : 1.5;
+  var targetX = window.__debugCamTargetX || 0;
+  var targetZ = window.__debugCamTargetZ || 0;
+  var cameraPosition = [targetX - Math.sin(camAngle) * camDist, camHeight, targetZ - Math.cos(camAngle) * camDist];
+  var cameraMatrix = m4.lookAt(cameraPosition, [targetX, targetY, targetZ], [0, 1, 0]);
+  var viewProjectionMatrix = m4.multiply(projectionMatrix, m4.inverse(cameraMatrix));
+
+  horse.objects.forEach(function(object) {
+    var uniforms = object.drawInfo.uniforms;
+    var matrix = m4.multiply(viewProjectionMatrix, object.worldMatrix);
+    gl.bindBuffer(gl.ARRAY_BUFFER, object.drawInfo.bufferInfo.positionBuffer);
+    gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, object.drawInfo.bufferInfo.colorBuffer);
+    gl.vertexAttribPointer(colorLoc, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    if (object.drawInfo.bufferInfo.texcoordBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, object.drawInfo.bufferInfo.texcoordBuffer);
+      gl.vertexAttribPointer(texcoordLoc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, object.drawInfo.bufferInfo.texture);
+      gl.uniform1f(useTextureLoc, 1);
+    } else {
+      gl.uniform1f(useTextureLoc, 0);
+    }
+    gl.uniformMatrix4fv(matrixLoc, false, matrix);
+    gl.uniform4fv(colorMultLoc, uniforms.u_colorMult);
+    gl.uniform4fv(colorOffsetLoc, uniforms.u_colorOffset);
+    gl.drawArrays(gl.TRIANGLES, 0, object.drawInfo.bufferInfo.numElements);
+  });
+
+  requestAnimationFrame(drawScene);
+}
+requestAnimationFrame(drawScene);
+</script>

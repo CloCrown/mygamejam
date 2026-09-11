@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Axis helper (Blender style)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #2b2b2b; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+"use strict";
+
+// Standalone exploration: a Blender-style navigation gizmo, isolated from
+// game/ on purpose (see CLAUDE.md — exploration phase, one file per
+// experiment so it can be deleted without touching shipped code).
+//
+// Blender's gizmo: 6 balls, one per axis direction (+X/-X/+Y/-Y/+Z/-Z),
+// each a flat circle with a letter, always facing the viewer. The 3
+// positive balls are solid/colored, the 3 negative ones are a dim outline.
+
+var canvas = document.getElementById("canvas");
+var gl = canvas.getContext("webgl");
+
+var vsSource = `
+attribute vec4 a_position;
+attribute vec2 a_texcoord;
+uniform mat4 a_matrix;
+varying vec2 v_texcoord;
+void main() {
+  gl_Position = a_matrix * a_position;
+  v_texcoord = a_texcoord;
+}`;
+
+var fsSource = `
+precision mediump float;
+varying vec2 v_texcoord;
+uniform sampler2D u_texture;
+void main() {
+  gl_FragColor = texture2D(u_texture, v_texcoord);
+}`;
+
+function compileShader(type, source) {
+  var shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(shader));
+  }
+  return shader;
+}
+
+var program = gl.createProgram();
+gl.attachShader(program, compileShader(gl.VERTEX_SHADER, vsSource));
+gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSource));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+  throw new Error(gl.getProgramInfoLog(program));
+}
+gl.useProgram(program);
+
+var positionLoc = gl.getAttribLocation(program, "a_position");
+var texcoordLoc = gl.getAttribLocation(program, "a_texcoord");
+var matrixLoc = gl.getUniformLocation(program, "a_matrix");
+gl.enableVertexAttribArray(positionLoc);
+gl.enableVertexAttribArray(texcoordLoc);
+
+// ---- Minimal 4x4 matrix helpers (column-major, same convention as
+// game/gl-utils.js) ----
+var m4 = {
+  identity: function() {
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  },
+  multiply: function(a, b) {
+    var dst = new Float32Array(16);
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        var sum = 0;
+        for (var k = 0; k < 4; k++) sum += a[k*4+row] * b[col*4+k];
+        dst[col*4+row] = sum;
+      }
+    }
+    return dst;
+  },
+  perspective: function(fovRad, aspect, near, far) {
+    var f = Math.tan(Math.PI * 0.5 - 0.5 * fovRad);
+    var rangeInv = 1 / (near - far);
+    var dst = new Float32Array(16);
+    dst[0]=f/aspect; dst[5]=f; dst[10]=(near+far)*rangeInv; dst[11]=-1;
+    dst[14]=near*far*rangeInv*2;
+    return dst;
+  },
+  lookAt: function(eye, target, up) {
+    function sub(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+    function norm(v){var l=Math.hypot(v[0],v[1],v[2]);return l>1e-5?[v[0]/l,v[1]/l,v[2]/l]:[0,0,0];}
+    function cross(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];}
+    var zAxis = norm(sub(eye, target));
+    var xAxis = norm(cross(up, zAxis));
+    var yAxis = norm(cross(zAxis, xAxis));
+    return new Float32Array([
+      xAxis[0], xAxis[1], xAxis[2], 0,
+      yAxis[0], yAxis[1], yAxis[2], 0,
+      zAxis[0], zAxis[1], zAxis[2], 0,
+      eye[0], eye[1], eye[2], 1,
+    ]);
+  },
+  inverse: function(m) {
+    // Rigid transform only (rotation + translation, no scale/shear) —
+    // enough for the camera matrices used here: transpose the 3x3
+    // rotation part, then negate the translation transformed by it.
+    var dst = new Float32Array(16);
+    dst[0]=m[0]; dst[1]=m[4]; dst[2]=m[8];
+    dst[4]=m[1]; dst[5]=m[5]; dst[6]=m[9];
+    dst[8]=m[2]; dst[9]=m[6]; dst[10]=m[10];
+    dst[15]=1;
+    var tx=m[12], ty=m[13], tz=m[14];
+    dst[12] = -(dst[0]*tx + dst[4]*ty + dst[8]*tz);
+    dst[13] = -(dst[1]*tx + dst[5]*ty + dst[9]*tz);
+    dst[14] = -(dst[2]*tx + dst[6]*ty + dst[10]*tz);
+    return dst;
+  },
+};
+
+// ---- A ball: circle+letter painted on a 2D canvas, uploaded as a texture
+// on a small quad. ----
+function createBall(letter, bg, fg) {
+  var size = 64;
+  var c = document.createElement("canvas");
+  c.width = size; c.height = size;
+  var ctx = c.getContext("2d");
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.arc(size/2, size/2, size/2 - 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = fg;
+  ctx.font = "bold " + (letter.length > 1 ? 24 : 32) + "px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(letter, size/2, size/2 + 2);
+
+  var texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  var s = 0.5;
+  var corners = [[-s,-s],[s,-s],[s,s],[-s,s]];
+  var positions = [], uvs = [];
+  [0,1,2, 0,2,3].forEach(function(i) {
+    positions.push(corners[i][0], corners[i][1], 0);
+    uvs.push(corners[i][0] + 0.5, 0.5 - corners[i][1]);
+  });
+
+  var positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+  var texcoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+
+  return { positionBuffer: positionBuffer, texcoordBuffer: texcoordBuffer, texture: texture };
+}
+
+var AXES = [
+  { letter: "X",  dir: [ 1, 0, 0], bg: "#e04b4b" },
+  { letter: "-X", dir: [-1, 0, 0], bg: "#7a2f2f" },
+  { letter: "Y",  dir: [ 0, 1, 0], bg: "#4be04b" },
+  { letter: "-Y", dir: [ 0,-1, 0], bg: "#2f7a2f" },
+  { letter: "Z",  dir: [ 0, 0, 1], bg: "#4b7ae0" },
+  { letter: "-Z", dir: [ 0, 0,-1], bg: "#2f4b7a" },
+];
+AXES.forEach(function(a) { a.ball = createBall(a.letter, a.bg, "#fff"); });
+
+// Thin line stubs from the origin to each positive ball, for a visual
+// "arm" like Blender's gizmo (a plain colored triangle strip, no texture).
+var lineVsSource = `
+attribute vec4 a_position;
+uniform mat4 a_matrix;
+void main() { gl_Position = a_matrix * a_position; }`;
+var lineFsSource = `
+precision mediump float;
+uniform vec4 u_color;
+void main() { gl_FragColor = u_color; }`;
+var lineProgram = gl.createProgram();
+gl.attachShader(lineProgram, compileShader(gl.VERTEX_SHADER, lineVsSource));
+gl.attachShader(lineProgram, compileShader(gl.FRAGMENT_SHADER, lineFsSource));
+gl.linkProgram(lineProgram);
+var linePositionLoc = gl.getAttribLocation(lineProgram, "a_position");
+var lineMatrixLoc = gl.getUniformLocation(lineProgram, "a_matrix");
+var lineColorLoc = gl.getUniformLocation(lineProgram, "u_color");
+var lineBuffer = gl.createBuffer();
+
+function resize() {
+  var dpr = 1;
+  var w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+  }
+}
+
+function render() {
+  resize();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.17, 0.17, 0.17, 1);
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  var aspect = canvas.width / canvas.height;
+  var projection = m4.perspective(50 * Math.PI / 180, aspect, 0.1, 20);
+  var camPos = [2.6, 2.0, 2.6];
+  var view = m4.inverse(m4.lookAt(camPos, [0, 0, 0], [0, 1, 0]));
+  var viewProjection = m4.multiply(projection, view);
+
+  // Billboard basis facing camPos (fixed camera here, computed once).
+  function norm(v){var l=Math.hypot(v[0],v[1],v[2]);return [v[0]/l,v[1]/l,v[2]/l];}
+  function cross(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];}
+  var bz = norm(camPos);
+  var bx = norm(cross([0,1,0], bz));
+  var by = cross(bz, bx);
+
+  // Arms: origin -> each positive axis tip.
+  gl.useProgram(lineProgram);
+  gl.enableVertexAttribArray(linePositionLoc);
+  gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+  var armColors = { X: [1,0.3,0.3,1], Y: [0.3,1,0.3,1], Z: [0.3,0.5,1,1] };
+  ["X","Y","Z"].forEach(function(letter) {
+    var axis = AXES.find(function(a){return a.letter===letter;});
+    var tip = axis.dir.map(function(v){return v*1.4;});
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0,0, tip[0],tip[1],tip[2]]), gl.DYNAMIC_DRAW);
+    gl.vertexAttribPointer(linePositionLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.uniformMatrix4fv(lineMatrixLoc, false, viewProjection);
+    gl.uniform4fv(lineColorLoc, armColors[letter]);
+    gl.drawArrays(gl.LINES, 0, 2);
+  });
+
+  // Balls, back-to-front by distance from camera so blending looks right.
+  gl.useProgram(program);
+  gl.enableVertexAttribArray(positionLoc);
+  gl.enableVertexAttribArray(texcoordLoc);
+  var ballSize = 0.5;
+  var ballDist = 1.7;
+  var sorted = AXES.slice().sort(function(a, b) {
+    function d(ax) { var p = ax.dir.map(function(v){return v*ballDist;}); return Math.hypot(p[0]-camPos[0],p[1]-camPos[1],p[2]-camPos[2]); }
+    return d(b) - d(a);
+  });
+  sorted.forEach(function(a) {
+    var center = a.dir.map(function(v){return v*ballDist;});
+    var world = new Float32Array([
+      bx[0]*ballSize, bx[1]*ballSize, bx[2]*ballSize, 0,
+      by[0]*ballSize, by[1]*ballSize, by[2]*ballSize, 0,
+      bz[0], bz[1], bz[2], 0,
+      center[0], center[1], center[2], 1,
+    ]);
+    var matrix = m4.multiply(viewProjection, world);
+    gl.bindBuffer(gl.ARRAY_BUFFER, a.ball.positionBuffer);
+    gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, a.ball.texcoordBuffer);
+    gl.vertexAttribPointer(texcoordLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindTexture(gl.TEXTURE_2D, a.ball.texture);
+    gl.uniformMatrix4fv(matrixLoc, false, matrix);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  });
+
+  requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

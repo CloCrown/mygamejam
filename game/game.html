@@ -1,19 +1,40 @@
+<div id="track-menu">
+  <h1>Choisis la couleur de ta corne</h1>
+  <div id="horn-color-list"></div>
+  <h1>Choisis un circuit</h1>
+  <div id="track-list"></div>
+</div>
 <canvas id="canvas"></canvas>
+<div id="timer">0:00</div>
+<canvas id="minimap" width="160" height="160"></canvas>
 <!-- vertex shader -->
 <script  id="vertex-shader-3d" type="x-shader/x-vertex">
 attribute vec4 a_position;
 attribute vec4 a_color;
+attribute vec2 a_texcoord;
+attribute vec3 a_normal;
+attribute float a_useVertexColor;
 
 uniform mat4 u_matrix;
+uniform mat4 u_world;
 
 varying vec4 v_color;
+varying vec2 v_texcoord;
+varying vec3 v_normal;
+varying float v_useVertexColor;
 
 void main() {
   // Multiply the position by the matrix.
   gl_Position = u_matrix * a_position;
 
-  // Pass the color to the fragment shader.
+  // Pass color and UV through; the fragment shader picks whichever this
+  // draw call actually uses (see u_useTexture and a_useVertexColor).
   v_color = a_color;
+  v_texcoord = a_texcoord;
+  v_useVertexColor = a_useVertexColor;
+  // Uniform scale only (see game.js), so the world matrix's upper-left 3x3
+  // carries normals correctly without a separate inverse-transpose.
+  v_normal = mat3(u_world) * a_normal;
 }
 </script>
 <!-- fragment shader -->
@@ -22,17 +43,47 @@ precision mediump float;
 
 // Passed in from the vertex shader.
 varying vec4 v_color;
+varying vec2 v_texcoord;
+varying vec3 v_normal;
+varying float v_useVertexColor;
 
 uniform vec4 u_colorMult;
 uniform vec4 u_colorOffset;
+uniform sampler2D u_texture;
+uniform float u_useTexture;
 
 void main() {
-   gl_FragColor = v_color * u_colorMult + u_colorOffset;
+   // v_useVertexColor lets a handful of vertices (e.g. the horn) opt out
+   // of the shared coat texture and use their flat vertex color instead,
+   // without a second draw call — most vertices leave it at 0 and follow
+   // u_useTexture as before.
+   vec4 baseColor = mix(
+     mix(v_color, texture2D(u_texture, v_texcoord), u_useTexture),
+     v_color,
+     v_useVertexColor
+   );
+
+   // Flat directional light (fixed, sun-like) plus a floor of ambient so
+   // low-poly faces read as volume instead of a uniform paint-fill.
+   vec3 n = normalize(v_normal);
+   vec3 lightDir = normalize(vec3(0.4, 0.8, 0.5));
+   float diffuse = max(dot(n, lightDir), 0.0);
+   float shade = 0.55 + 0.45 * diffuse;
+
+   gl_FragColor = vec4(baseColor.rgb * shade, baseColor.a) * u_colorMult + u_colorOffset;
 }
 </script>
 <link rel="stylesheet" href="game.css">
 <script src="gl-utils.js"></script>
-<!-- Pick the track by changing this one line: "track.js" (oval) or "track2.js" (winding). -->
+<script src="audio.js"></script>
+<script src="tail-debug-panel.js"></script>
+<script src="side-debug-panel.js"></script>
 <script src="track2.js"></script>
-<script src="unicorn-rig.js"></script>
+<script src="powerups.js"></script>
+<script src="obstacle-types.js"></script>
+<script src="obstacles.js"></script>
+<script src="ai-horse.js"></script>
+<script src="horse-mesh-skinned.js"></script>
+<script src="horse-rig-skinned.js"></script>
+<script src="horse-instance.js"></script>
 <script src="game.js"></script>

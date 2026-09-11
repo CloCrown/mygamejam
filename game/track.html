@@ -1,0 +1,326 @@
+<canvas id="canvas"></canvas>
+<canvas id="editor"></canvas>
+<div id="track-picker"></div>
+<div id="editor-info"></div>
+<!-- vertex shader -->
+<script id="vertex-shader-3d" type="x-shader/x-vertex">
+attribute vec4 a_position;
+attribute vec4 a_color;
+
+uniform mat4 u_matrix;
+
+varying vec4 v_color;
+
+void main() {
+  gl_Position = u_matrix * a_position;
+  v_color = a_color;
+}
+</script>
+<!-- fragment shader -->
+<script id="fragment-shader-3d" type="x-shader/x-fragment">
+precision mediump float;
+
+varying vec4 v_color;
+
+void main() {
+  gl_FragColor = v_color;
+}
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #222; }
+  #canvas, #editor { width: 100%; height: 100%; display: block; position: absolute; top: 0; left: 0; }
+  #editor { cursor: crosshair; pointer-events: none; }
+  #editor.active { pointer-events: auto; }
+  #track-picker {
+    position: absolute; top: 10px; left: 10px;
+    font-family: sans-serif; background: rgba(0,0,0,0.5);
+    padding: 8px; border-radius: 6px;
+  }
+  #track-picker button {
+    display: block; margin: 2px 0; width: 100%;
+  }
+  #track-picker label {
+    color: #fff; display: block; margin-top: 6px; font-size: 12px;
+  }
+  #editor-info {
+    position: absolute; top: 10px; right: 10px;
+    font-family: monospace; font-size: 12px; color: #fff;
+    background: rgba(0,0,0,0.5); padding: 8px; border-radius: 6px;
+    max-width: 360px; white-space: pre-wrap;
+  }
+</style>
+<script src="gl-utils.js"></script>
+<script src="track2.js"></script>
+<script>
+"use strict";
+
+var canvas = document.querySelector("#canvas");
+var gl = canvas.getContext("webgl");
+
+var program = createProgram(
+  gl,
+  document.querySelector("#vertex-shader-3d").text,
+  document.querySelector("#fragment-shader-3d").text
+);
+var positionLoc = gl.getAttribLocation(program, "a_position");
+var colorLoc = gl.getAttribLocation(program, "a_color");
+var matrixLoc = gl.getUniformLocation(program, "u_matrix");
+
+gl.useProgram(program);
+gl.enableVertexAttribArray(positionLoc);
+gl.enableVertexAttribArray(colorLoc);
+gl.enable(gl.DEPTH_TEST);
+gl.enable(gl.CULL_FACE);
+
+var trackIndex = 0;
+var track = createTrack(TRACKS[trackIndex]);
+var groundBufferInfo = track.createGroundBufferInfo(gl);
+
+var picker = document.querySelector("#track-picker");
+TRACKS.forEach(function(config, i) {
+  var btn = document.createElement("button");
+  btn.textContent = config.name;
+  btn.addEventListener("click", function() {
+    trackIndex = i;
+    track = createTrack(TRACKS[trackIndex]);
+    groundBufferInfo = track.createGroundBufferInfo(gl);
+    refreshEditor();
+  });
+  picker.appendChild(btn);
+});
+
+var editModeLabel = document.createElement("label");
+var editModeCheckbox = document.createElement("input");
+editModeCheckbox.type = "checkbox";
+editModeLabel.appendChild(editModeCheckbox);
+editModeLabel.appendChild(document.createTextNode(" Éditer les waypoints (vue du dessus)"));
+picker.appendChild(editModeLabel);
+
+var exportBtn = document.createElement("button");
+exportBtn.textContent = "Copier le JSON des waypoints";
+exportBtn.style.marginTop = "6px";
+picker.appendChild(exportBtn);
+
+// Simple orbit camera controlled with the mouse (drag) + wheel (zoom), just
+// enough to look at a track from any angle without any player/game logic.
+var camDistance = 250;
+var camYaw = 0;
+var camPitch = 0.6;
+var dragging = false;
+var lastX = 0, lastY = 0;
+
+canvas.addEventListener("mousedown", function(e) {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+window.addEventListener("mouseup", function() {
+  dragging = false;
+});
+window.addEventListener("mousemove", function(e) {
+  if (!dragging) return;
+  camYaw -= (e.clientX - lastX) * 0.01;
+  camPitch = Math.max(0.1, Math.min(1.5, camPitch - (e.clientY - lastY) * 0.01));
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+canvas.addEventListener("wheel", function(e) {
+  camDistance = Math.max(30, Math.min(600, camDistance + e.deltaY * 0.2));
+});
+
+function resizeCanvasToDisplaySize(canvas) {
+  var width = canvas.clientWidth;
+  var height = canvas.clientHeight;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function drawScene() {
+  resizeCanvasToDisplaySize(gl.canvas);
+  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+  gl.clearColor(0.6, 0.8, 0.95, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  var aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+  var projectionMatrix = m4.perspective(Math.PI / 4, aspect, 0.5, 2000);
+
+  var cameraPosition = [
+    Math.sin(camYaw) * Math.cos(camPitch) * camDistance,
+    Math.sin(camPitch) * camDistance,
+    Math.cos(camYaw) * Math.cos(camPitch) * camDistance,
+  ];
+  var cameraMatrix = m4.lookAt(cameraPosition, [0, 0, 0], [0, 1, 0]);
+  var viewMatrix = m4.inverse(cameraMatrix);
+  var viewProjectionMatrix = m4.multiply(projectionMatrix, viewMatrix);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, groundBufferInfo.positionBuffer);
+  gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, groundBufferInfo.colorBuffer);
+  gl.vertexAttribPointer(colorLoc, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+  gl.uniformMatrix4fv(matrixLoc, false, viewProjectionMatrix);
+  gl.drawArrays(gl.TRIANGLES, 0, groundBufferInfo.numElements);
+
+  requestAnimationFrame(drawScene);
+}
+requestAnimationFrame(drawScene);
+
+// ---- Waypoint editor: top-down 2D view where each waypoint is a draggable
+// dot. Regenerates the track's ground mesh live as points move, and reports
+// the minimum separation between non-adjacent segments so overlaps are
+// caught by measurement instead of guesswork. ----
+var editorCanvas = document.querySelector("#editor");
+var editorCtx = editorCanvas.getContext("2d");
+var editorInfo = document.querySelector("#editor-info");
+var draggingPointIndex = -1;
+var editScale = 1; // px per world unit, recomputed on resize/track change
+
+function distPointSeg(p, a, b) {
+  var abx = b[0] - a[0], aby = b[1] - a[1];
+  var apx = p[0] - a[0], apy = p[1] - a[1];
+  var lenSq = abx * abx + aby * aby;
+  var t = lenSq > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq)) : 0;
+  var cx = a[0] + abx * t, cy = a[1] + aby * t;
+  return Math.hypot(p[0] - cx, p[1] - cy);
+}
+function segDist(a, b, c, d) {
+  return Math.min(
+    distPointSeg(a, c, d), distPointSeg(b, c, d),
+    distPointSeg(c, a, b), distPointSeg(d, a, b)
+  );
+}
+function minSeparation(waypoints) {
+  var n = waypoints.length;
+  var min = Infinity;
+  for (var i = 0; i < n; i++) {
+    for (var j = i + 1; j < n; j++) {
+      if ((j + 1) % n === i || (i + 1) % n === j) continue;
+      var a = waypoints[i], b = waypoints[(i + 1) % n];
+      var c = waypoints[j], d = waypoints[(j + 1) % n];
+      var dist = segDist(a, b, c, d);
+      if (dist < min) min = dist;
+    }
+  }
+  return min;
+}
+
+function worldToEditor(x, z) {
+  return [
+    editorCanvas.width / 2 + x * editScale,
+    editorCanvas.height / 2 + z * editScale,
+  ];
+}
+function editorToWorld(px, py) {
+  return [
+    (px - editorCanvas.width / 2) / editScale,
+    (py - editorCanvas.height / 2) / editScale,
+  ];
+}
+
+function rebuildGroundFromCurrentWaypoints() {
+  track = createTrack(TRACKS[trackIndex]);
+  groundBufferInfo = track.createGroundBufferInfo(gl);
+}
+
+function refreshEditor() {
+  var config = TRACKS[trackIndex];
+  var w = editorCanvas.clientWidth, h = editorCanvas.clientHeight;
+  if (editorCanvas.width !== w || editorCanvas.height !== h) {
+    editorCanvas.width = w;
+    editorCanvas.height = h;
+  }
+  editScale = Math.min(w, h) / config.mapSize;
+
+  editorCtx.clearRect(0, 0, editorCanvas.width, editorCanvas.height);
+  if (!editModeCheckbox.checked) {
+    editorInfo.textContent = "";
+    return;
+  }
+
+  var waypoints = config.waypoints;
+
+  // Track path as a filled loop, drawn to scale (trackWidth as line width).
+  editorCtx.strokeStyle = "rgba(60,60,70,0.9)";
+  editorCtx.lineWidth = config.trackWidth * editScale;
+  editorCtx.lineJoin = "round";
+  editorCtx.lineCap = "round";
+  editorCtx.beginPath();
+  waypoints.forEach(function(p, i) {
+    var s = worldToEditor(p[0], p[1]);
+    if (i === 0) editorCtx.moveTo(s[0], s[1]); else editorCtx.lineTo(s[0], s[1]);
+  });
+  editorCtx.closePath();
+  editorCtx.stroke();
+
+  // Waypoint handles.
+  waypoints.forEach(function(p, i) {
+    var s = worldToEditor(p[0], p[1]);
+    editorCtx.fillStyle = i === 0 ? "#4caf50" : "#ffeb3b";
+    editorCtx.beginPath();
+    editorCtx.arc(s[0], s[1], 7, 0, Math.PI * 2);
+    editorCtx.fill();
+    editorCtx.strokeStyle = "#000";
+    editorCtx.lineWidth = 1.5;
+    editorCtx.stroke();
+    editorCtx.fillStyle = "#000";
+    editorCtx.font = "11px monospace";
+    editorCtx.fillText(String(i), s[0] + 9, s[1] - 9);
+  });
+
+  var minSep = minSeparation(waypoints);
+  var safe = minSep >= config.trackWidth;
+  editorInfo.style.color = safe ? "#8f8" : "#f88";
+  editorInfo.textContent =
+    "Piste : " + config.name + "\n" +
+    "Largeur piste : " + config.trackWidth + "\n" +
+    "Séparation min entre brins non adjacents : " + minSep.toFixed(1) +
+    (safe ? "  (OK)" : "  (CHEVAUCHEMENT)") +
+    "\nGlisse les points jaunes pour ajuster.";
+}
+
+editModeCheckbox.addEventListener("change", function() {
+  editorCanvas.classList.toggle("active", editModeCheckbox.checked);
+  refreshEditor();
+});
+window.addEventListener("resize", refreshEditor);
+
+editorCanvas.addEventListener("mousedown", function(e) {
+  if (!editModeCheckbox.checked) return;
+  var rect = editorCanvas.getBoundingClientRect();
+  var px = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+  var py = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+  var waypoints = TRACKS[trackIndex].waypoints;
+  var best = -1, bestDist = 16; // px hit radius
+  waypoints.forEach(function(p, i) {
+    var s = worldToEditor(p[0], p[1]);
+    var d = Math.hypot(s[0] - px, s[1] - py);
+    if (d < bestDist) { bestDist = d; best = i; }
+  });
+  draggingPointIndex = best;
+});
+window.addEventListener("mouseup", function() {
+  draggingPointIndex = -1;
+});
+editorCanvas.addEventListener("mousemove", function(e) {
+  if (draggingPointIndex < 0) return;
+  var rect = editorCanvas.getBoundingClientRect();
+  var px = (e.clientX - rect.left) * (editorCanvas.width / rect.width);
+  var py = (e.clientY - rect.top) * (editorCanvas.height / rect.height);
+  var world = editorToWorld(px, py);
+  TRACKS[trackIndex].waypoints[draggingPointIndex][0] = Math.round(world[0]);
+  TRACKS[trackIndex].waypoints[draggingPointIndex][1] = Math.round(world[1]);
+  rebuildGroundFromCurrentWaypoints();
+  refreshEditor();
+});
+
+exportBtn.addEventListener("click", function() {
+  var json = JSON.stringify(TRACKS[trackIndex].waypoints);
+  navigator.clipboard.writeText(json).then(function() {
+    exportBtn.textContent = "Copié !";
+    setTimeout(function() { exportBtn.textContent = "Copier le JSON des waypoints"; }, 1200);
+  });
+});
+
+refreshEditor();
+</script>
