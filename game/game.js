@@ -54,8 +54,8 @@ function activateMenuEntry(index) {
 // being interpreted as a game input, then is saved to localStorage. Esc
 // cancels listening without changing anything, and also returns from the
 // Options screen to the title menu when not listening. ----
-var OPTIONS_ACTIONS = ["left", "right", "jump", "activate"];
-var OPTIONS_LABELS = { left: "Gauche", right: "Droite", jump: "Sauter", activate: "Activer la corne" };
+var OPTIONS_ACTIONS = ["left", "right", "jump", "activate", "fire"];
+var OPTIONS_LABELS = { left: "Gauche", right: "Droite", jump: "Sauter", activate: "Activer la corne", fire: "Tirer" };
 var optionsIndex = 0;
 var optionsEntryRects = [];
 var awaitingBindFor = null;
@@ -206,6 +206,52 @@ function splitTrianglesByZones(rig, zones) {
 }
 var meshSplit = splitTrianglesByZones(rig, HORSE_ZONES);
 
+// Precomputes every mesh edge that sits between two different zones (the
+// same seams visible as thin lines on the flat-colored horse - each zone
+// is its own fill() call, so canvas antialiasing leaves a hairline gap at
+// every zone boundary). Recolored to the active horn's color while a
+// power-up is active, drawn over the normal fill - see drawZoneBoundaries
+// in drawHorse below. Computed once here (bind-pose topology doesn't
+// change at runtime), not per frame.
+function computeZoneBoundaryEdges(rig, zoneOfTriangle) {
+  var idx = rig.indices;
+  var edgeZones = {}; // edge key -> zone name of the first triangle seen owning it
+  var boundary = [];
+  for (var t = 0; t < idx.length; t += 3) {
+    var zone = zoneOfTriangle[t / 3];
+    var tri = [idx[t], idx[t + 1], idx[t + 2]];
+    for (var e = 0; e < 3; e++) {
+      var a = tri[e], b = tri[(e + 1) % 3];
+      var key = a < b ? a + "_" + b : b + "_" + a;
+      if (key in edgeZones) {
+        if (edgeZones[key] !== zone) boundary.push(a, b);
+        edgeZones[key] = null; // seen twice - never boundary again even if a 3rd triangle shares it
+      } else {
+        edgeZones[key] = zone;
+      }
+    }
+  }
+  return boundary;
+}
+// zoneOfTriangle[i] = zone name of the i-th triangle in rig.indices, built
+// by inverting meshSplit's per-zone triangle-index lists.
+var zoneOfTriangle = (function () {
+  var map = {};
+  Object.keys(meshSplit).forEach(function (zoneName) {
+    var idx = meshSplit[zoneName];
+    for (var t = 0; t < idx.length; t += 3) {
+      map[idx[t] + "_" + idx[t + 1] + "_" + idx[t + 2]] = zoneName;
+    }
+  });
+  var result = [];
+  var full = rig.indices;
+  for (var t2 = 0; t2 < full.length; t2 += 3) {
+    result.push(map[full[t2] + "_" + full[t2 + 1] + "_" + full[t2 + 2]]);
+  }
+  return result;
+})();
+var ZONE_BOUNDARY_EDGES = computeZoneBoundaryEdges(rig, zoneOfTriangle);
+
 // Rig/mesh authored in Blender units, ~0.96 units tall after the latest
 // re-export (clean contour Fill + Beautify, then rescaled in Blender - see
 // CLAUDE.md); scale to make the horse about as tall as the player hitbox
@@ -222,21 +268,67 @@ var ownedHorn = -1; // -1 = none yet, else index into HORN_COLORS
 var hornPopupTime = 0;
 var wasActivateDown = false;
 
+// ---- Horn power-up state: each active/timed effect below is independent
+// (multiple can be active at once, e.g. speed boost while shrunk) rather
+// than a single "current effect" slot, since nothing here requires them to
+// be mutually exclusive. Durations decremented in loop(). ----
+var fireReady = false; // red: next "I" press fires a projectile, no timer
+var superJumpReady = false; // orange: next jump is a super jump, no timer
+var speedBoostTime = 0; // blue
+var SPEED_BOOST_DURATION = 5;
+var SPEED_BOOST_MULTIPLIER = 1.8;
+var shrinkTime = 0; // indigo
+var SHRINK_DURATION = 5;
+var SHRINK_SCALE = 0.55;
+var hornInvincibleTime = 0; // yellow: separate from the post-hit invulnerableTime
+var HORN_INVINCIBLE_DURATION = 5;
+var SUPER_JUMP_MULTIPLIER = 1.5;
+var projectiles = []; // { x, y, w, h, vx }, red horn's fired shots
+var PROJECTILE_SPEED = 900;
+var PROJECTILE_SIZE = 20;
+var wasFireDown = false;
+
 // ---- Horn power-up registry: one entry per HORN_COLORS index (same order,
 // see horn-item-2d.js). Each `apply` runs once when that horn is consumed
-// (E key). Effects not designed yet - all no-op placeholders for now, see
-// CLAUDE.md "Périmètre par tâche". Add real behavior (speed boost, higher
-// jump, invincibility, etc.) inside the matching apply() only; nothing
-// else in game.js needs to change to wire a new effect in.
+// (E key). `zone` (a key into meshSplit, or null) is the body-part region
+// drawHorse recolors with that horn's color while the matching state above
+// is active - see the "while active" checks in drawHorse. Violet has no
+// effect yet - not designed, left as a no-op placeholder like the others
+// were, see CLAUDE.md "Périmètre par tâche".
 var HORN_EFFECTS = [
-  { name: "rouge", apply: function () {} },
-  { name: "orange", apply: function () {} },
-  { name: "jaune", apply: function () {} },
-  { name: "vert", apply: function () {} },
-  { name: "bleu", apply: function () {} },
-  { name: "indigo", apply: function () {} },
-  { name: "violet", apply: function () {} },
+  {
+    name: "rouge", zone: "horn",
+    apply: function () { fireReady = true; },
+  },
+  {
+    name: "orange", zone: "thighs",
+    apply: function () { superJumpReady = true; },
+  },
+  {
+    name: "jaune", zone: "horn",
+    apply: function () { hornInvincibleTime = HORN_INVINCIBLE_DURATION; },
+  },
+  {
+    name: "vert", zone: null,
+    apply: function () { lives = Math.min(lives + 1, MAX_LIVES); },
+  },
+  {
+    name: "bleu", zone: "toe",
+    apply: function () { speedBoostTime = SPEED_BOOST_DURATION; },
+  },
+  {
+    name: "indigo", zone: "head",
+    apply: function () { shrinkTime = SHRINK_DURATION; },
+  },
+  { name: "violet", zone: null, apply: function () {} },
 ];
+
+// Index into HORN_COLORS of the most recently activated horn - drives
+// which color the zone-boundary lines show (see activeHornColor below)
+// when more than one effect is active at once (e.g. red armed to fire,
+// then blue's speed boost activated on top of it): the newest activation
+// wins the display, even though the older effect is still running.
+var lastActivatedHorn = -1;
 
 // Consumes the owned horn on a fresh press of the activate key (edge-detect
 // against wasActivateDown so holding the key doesn't retrigger every
@@ -246,9 +338,56 @@ function updateHornActivation() {
   if (down && !wasActivateDown && ownedHorn >= 0) {
     Audio_.play("effectActivate");
     HORN_EFFECTS[ownedHorn].apply();
+    lastActivatedHorn = ownedHorn;
     ownedHorn = -1;
   }
   wasActivateDown = down;
+}
+
+// Red horn's shot: fires from the player's facing edge, travels straight,
+// destroys the first monster it touches. Uses the rebindable "fire" action
+// (default I, see player-2d.js's DEFAULT_KEY_BINDINGS/OPTIONS_ACTIONS
+// above) like activate/jump/etc.
+function updateFiring() {
+  var fireKeyDown = player.keys.fire;
+  if (fireKeyDown && !wasFireDown && fireReady) {
+    var dir = player.facingRight ? 1 : -1;
+    projectiles.push({
+      x: player.x + (player.facingRight ? player.w : -PROJECTILE_SIZE),
+      y: player.y + player.h / 2 - PROJECTILE_SIZE / 2,
+      w: PROJECTILE_SIZE, h: PROJECTILE_SIZE,
+      vx: PROJECTILE_SPEED * dir,
+    });
+    fireReady = false;
+  }
+  wasFireDown = fireKeyDown;
+}
+
+function updateProjectiles(dt) {
+  for (var i = projectiles.length - 1; i >= 0; i--) {
+    var p = projectiles[i];
+    p.x += p.vx * dt;
+    var hit = false;
+    for (var j = monsters.length - 1; j >= 0; j--) {
+      if (aabbOverlap(p, monsters[j])) {
+        monsters.splice(j, 1);
+        hit = true;
+        break;
+      }
+    }
+    if (hit || p.x < camX - 50 || p.x > camX + canvas.width + 50) {
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
+function drawProjectiles(ctx) {
+  ctx.fillStyle = "#e0463f";
+  projectiles.forEach(function (p) {
+    ctx.beginPath();
+    ctx.arc(p.x - camX + p.w / 2, p.y + p.h / 2, p.w / 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
 }
 
 // ---- Pickup registry: add a new pickup type here (array field on `level`,
@@ -322,7 +461,7 @@ var invulnerableTime = 0;
 var INVULNERABLE_DURATION = 1.5;
 
 function takeHit() {
-  if (invulnerableTime > 0) return;
+  if (invulnerableTime > 0 || hornInvincibleTime > 0) return;
   lives--;
   invulnerableTime = INVULNERABLE_DURATION;
   hitFlashTime = 0.2;
@@ -378,12 +517,66 @@ function updateCamera() {
   camX = Math.max(0, Math.min(camX, level.width - canvas.width));
 }
 
+// True while the effect for the given HORN_COLORS index is still running -
+// used both to pick the zone-boundary highlight color (activeHornColor
+// below) and as the fallback scan when the most recently activated horn's
+// own effect has already ended.
+function isHornEffectActive(colorIndex) {
+  switch (colorIndex) {
+    case 0: return fireReady;
+    case 1: return superJumpReady;
+    case 2: return hornInvincibleTime > 0;
+    case 4: return speedBoostTime > 0;
+    case 5: return shrinkTime > 0;
+    default: return false; // green/violet: instant or no effect, never "active"
+  }
+}
+
+// Zone (see HORSE_ZONES/meshSplit) -> color for every currently-active horn
+// effect's own body-part region (HORN_EFFECTS[i].zone), filled solid in
+// drawHorse - e.g. red keeps the "horn" (ears) zone red for as long as
+// fireReady stays true. Independent from activeHornColor's zone-boundary
+// highlight below: several effects' zones can be filled at once (each in
+// its own color), while the boundary-line highlight only ever shows one.
+function activeZoneFills() {
+  var fills = {};
+  for (var i = 0; i < HORN_EFFECTS.length; i++) {
+    if (HORN_EFFECTS[i].zone && isHornEffectActive(i)) {
+      fills[HORN_EFFECTS[i].zone] = HORN_COLORS[i];
+    }
+  }
+  return fills;
+}
+
+// Which horn color to highlight the horse's zone-boundary lines with right
+// now (see ZONE_BOUNDARY_EDGES/drawZoneBoundaries), from the horn power-up
+// states in loop() - reverts to null (no highlight) automatically as soon
+// as the active effect ends/is consumed, no separate timer needed here.
+// Several effects can be active at once (e.g. red armed to fire while
+// blue's speed boost also runs) - the most recently activated one wins the
+// display (see lastActivatedHorn), falling back to scanning for any other
+// still-active effect if that one has since ended.
+function activeHornColor() {
+  if (isHornEffectActive(lastActivatedHorn)) return HORN_COLORS[lastActivatedHorn];
+  for (var i = 0; i < HORN_COLORS.length; i++) {
+    if (isHornEffectActive(i)) return HORN_COLORS[i];
+  }
+  return null;
+}
+
 function drawHorse(ctx, screenX, screenY, facingRight, time) {
+  var hornColor = activeHornColor();
+  var zoneFill = activeZoneFills();
   ctx.save();
   ctx.translate(screenX, screenY);
   // Source mesh is authored facing left (see my_horse_side_view.svg /
   // horse-rig-2d-real-test.html) - flip when facing right instead of left.
   if (facingRight) ctx.scale(-1, 1);
+  // Indigo horn: shrinks the whole horse visually (not player.w/h, so the
+  // physics hitbox is unaffected - matches the original CLAUDE.md ROYGBIV
+  // note that this effect wasn't fully speced, kept purely cosmetic here).
+  var shrink = shrinkTime > 0 ? SHRINK_SCALE : 1;
+  if (shrink !== 1) ctx.scale(shrink, shrink);
 
   function toScreen(mx, my) {
     return [(mx - HORSE_PIVOT_X) * HORSE_SCALE, -(my - HORSE_PIVOT_Y) * HORSE_SCALE];
@@ -410,6 +603,26 @@ function drawHorse(ctx, screenX, screenY, facingRight, time) {
     ctx.fill();
   }
 
+  // Draws every zone-boundary seam (see ZONE_BOUNDARY_EDGES above) in a
+  // given color - these are the same hairline gaps visible between
+  // body-part zones on the flat-colored horse, recolored to highlight
+  // that a horn power-up is active anywhere on the horse.
+  function drawZoneBoundaries(strokeColor) {
+    var pos = rig.skinnedPositions;
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (var i = 0; i < ZONE_BOUNDARY_EDGES.length; i += 2) {
+      var a = ZONE_BOUNDARY_EDGES[i], b = ZONE_BOUNDARY_EDGES[i + 1];
+      var pa = toScreen(pos[a * 2], pos[a * 2 + 1]);
+      var pb = toScreen(pos[b * 2], pos[b * 2 + 1]);
+      ctx.moveTo(pa[0], pa[1]);
+      ctx.lineTo(pb[0], pb[1]);
+    }
+    ctx.stroke();
+  }
+
   var speed = player.onGround && (player.keys.left || player.keys.right) ? 1.6 : 0;
   // Blend into the fixed jump pose while airborne; jumpBlend eases in/out
   // over ~0.15s around takeoff/landing instead of snapping, using onGround
@@ -420,26 +633,33 @@ function drawHorse(ctx, screenX, screenY, facingRight, time) {
   // matches the original two-pass "near/far legs" look instead of
   // recoloring the far legs per zone too (that would look like 2 horses).
   animateHorseRig2DWithJump(rig, time, speed, FAR_LEG_PHASE_OFFSET_2D, jumpBlend);
-  drawTris(meshSplit.thighs, -4, -2, "#a9713f");
+  drawTris(meshSplit.thighs, -4, -2, zoneFill.thighs || "#a9713f");
   drawTris(meshSplit.foot, -4, -2, "#a9713f");
   drawTris(meshSplit.frontFoot, -4, -2, "#a9713f");
-  drawTris(meshSplit.toe, -4, -2, "#2d5f8a");
-  drawTris(meshSplit.frontToe, -4, -2, "#2d5f8a");
+  drawTris(meshSplit.toe, -4, -2, zoneFill.toe || "#0d0d0d");
+  drawTris(meshSplit.frontToe, -4, -2, zoneFill.toe || "#0d0d0d");
 
-  // Near pass: every zone drawn separately with its own color (see
-  // HORSE_ZONES above) so each can be recolored independently later (e.g.
-  // per horn power-up) - same base color for all of them by default.
+  // Near pass: every zone drawn separately (see HORSE_ZONES above). A zone
+  // fills with its horn's color while that horn's own effect is active
+  // (see activeZoneFills - e.g. "horn" stays red for as long as fireReady
+  // is true), otherwise its normal color.
   animateHorseRig2DWithJump(rig, time, speed, 0, jumpBlend);
   drawTris(meshSplit.body, 0, 0, BODY_COLOR);
-  drawTris(meshSplit.thighs, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.thighs, 0, 0, zoneFill.thighs || BODY_COLOR);
   drawTris(meshSplit.foot, 0, 0, BODY_COLOR);
   drawTris(meshSplit.frontFoot, 0, 0, BODY_COLOR);
   drawTris(meshSplit.tail, 0, 0, BODY_COLOR);
   drawTris(meshSplit.neck, 0, 0, BODY_COLOR);
-  drawTris(meshSplit.head, 0, 0, BODY_COLOR);
-  drawTris(meshSplit.horn, 0, 0, BODY_COLOR);
-  drawTris(meshSplit.toe, 0, 0, "#3d7fb8");
-  drawTris(meshSplit.frontToe, 0, 0, "#3d7fb8");
+  drawTris(meshSplit.head, 0, 0, zoneFill.head || BODY_COLOR);
+  drawTris(meshSplit.horn, 0, 0, zoneFill.horn || BODY_COLOR);
+  drawTris(meshSplit.toe, 0, 0, zoneFill.toe || "#1a1a1a");
+  drawTris(meshSplit.frontToe, 0, 0, zoneFill.toe || "#1a1a1a");
+
+  // While any horn power-up is active, every zone-boundary seam line on
+  // the horse (see ZONE_BOUNDARY_EDGES) is traced in that horn's color, on
+  // top of the normal fills above - drawn at the near pose only (matches
+  // the near legs' position) so it doesn't double up with the far legs.
+  if (hornColor) drawZoneBoundaries(hornColor);
 
   ctx.restore();
 }
@@ -733,7 +953,16 @@ function loop(ts) {
 
   if (gameState === "playing") {
     updatePlayer(player, dt);
-    if (player.keys.jump && player.onGround) Audio_.play("jump");
+    // Blue horn: scales the run speed updatePlayer just set, while active.
+    if (speedBoostTime > 0 && player.vx !== 0) player.vx *= SPEED_BOOST_MULTIPLIER;
+    // Orange horn: consumed on the next jump (edge-detected the same way
+    // updatePlayer's own jump is - onGround gate already applied there).
+    var jumpedThisFrame = player.keys.jump && player.onGround;
+    if (jumpedThisFrame && superJumpReady) {
+      player.vy *= SUPER_JUMP_MULTIPLIER;
+      superJumpReady = false;
+    }
+    if (jumpedThisFrame) Audio_.play("jump");
     var solids = level.platforms.concat(level.obstacles);
     stepBody(player, solids, dt);
     player.x = Math.max(0, Math.min(player.x, level.width - player.w));
@@ -741,19 +970,25 @@ function loop(ts) {
     wasOnGround = player.onGround;
 
     monsters.forEach(function (m) { updateMonster(m, dt); });
+    updateFiring();
+    updateProjectiles(dt);
 
     collectPickups();
     updateHornActivation();
     checkObstacleHit();
     checkFinish();
+    if (speedBoostTime > 0) speedBoostTime -= dt;
+    if (shrinkTime > 0) shrinkTime -= dt;
     if (hitFlashTime > 0) hitFlashTime -= dt;
     if (hornPopupTime > 0) hornPopupTime -= dt;
     if (invulnerableTime > 0) invulnerableTime -= dt;
+    if (hornInvincibleTime > 0) hornInvincibleTime -= dt;
     updateCamera();
   }
 
   drawBackground(ctx, canvas.width, canvas.height, camX, level.groundY);
   drawLevel(ctx);
+  drawProjectiles(ctx);
   drawHorse(ctx, player.x - camX + player.w / 2, player.y + player.h, player.facingRight, player.animTime);
   if (hitFlashTime > 0) {
     ctx.fillStyle = "rgba(255,0,0,0.25)";

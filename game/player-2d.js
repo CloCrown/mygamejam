@@ -23,6 +23,7 @@ var DEFAULT_KEY_BINDINGS = {
   right: { code: "KeyD", label: "D" },
   jump: { code: "Space", label: "Espace" },
   activate: { code: "KeyE", label: "E" },
+  fire: { code: "KeyI", label: "I" },
 };
 
 var KEY_BINDINGS_STORAGE_KEY = "horseRunKeyBindings";
@@ -68,7 +69,7 @@ function createPlayer(x, y) {
     onGround: false,
     facingRight: true,
     animTime: 0,
-    keys: { left: false, right: false, jump: false, activate: false },
+    keys: { left: false, right: false, jump: false, activate: false, fire: false },
   };
 }
 
