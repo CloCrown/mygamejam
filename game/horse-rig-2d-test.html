@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Horse 2D rig prototype</title>
+<style>
+  html, body { margin: 0; background: #cfe8ff; overflow: hidden; font-family: sans-serif; }
+  canvas { display: block; margin: 40px auto; background: #fff; border: 1px solid #999; }
+  p { text-align: center; color: #333; }
+</style>
+</head>
+<body>
+<p>Prototype exploratoire : rig de bones 2D piloté par formules (galop procédural), silhouette = SVG de référence. Pas le pipeline final Blender.</p>
+<canvas id="canvas" width="700" height="360"></canvas>
+<script src="horse-rig-2d-prototype.js"></script>
+<script>
+"use strict";
+var canvas = document.querySelector("#canvas");
+var ctx = canvas.getContext("2d");
+var rig = buildBoneRig2D(HORSE_BONES_2D);
+
+var img = new Image();
+img.src = "my_horse_side_view.svg";
+
+var start = null;
+function draw(ts) {
+  if (start === null) start = ts;
+  var time = (ts - start) / 1000;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  animateGait2D(rig, time, 1.6);
+  ctx.save();
+  ctx.scale(-1, 1); // mirror: source SVG faces right, keep facing convention "left" like horse-2d-outline.js
+  drawHorseRig2D(ctx, rig, img, -400, 60, 1.3);
+  ctx.restore();
+  requestAnimationFrame(draw);
+}
+if (img.complete) requestAnimationFrame(draw);
+else img.onload = function () { requestAnimationFrame(draw); };
+</script>
+</body>
+</html>
