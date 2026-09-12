@@ -36,9 +36,9 @@ var gameState = "title";
 // defined yet, see CLAUDE.md) - present and selectable, but its action is
 // a no-op for now.
 var MENU_ENTRIES = [
-  { label: "Jouer", action: function () { gameState = "playing"; Audio_.startMusic(); } },
+  { label: "Play", action: function () { gameState = "playing"; Audio_.startMusic(); } },
   { label: "Options", action: function () { gameState = "options"; } },
-  { label: "Quitter", action: function () {} },
+  { label: "Quit", action: function () {} },
 ];
 var menuIndex = 0;
 var menuEntryRects = []; // filled by drawTitleScreen each frame, used for mouse hit-testing
@@ -55,7 +55,12 @@ function activateMenuEntry(index) {
 // cancels listening without changing anything, and also returns from the
 // Options screen to the title menu when not listening. ----
 var OPTIONS_ACTIONS = ["left", "right", "jump", "activate", "fire"];
-var OPTIONS_LABELS = { left: "Gauche", right: "Droite", jump: "Sauter", activate: "Activer la corne", fire: "Tirer" };
+var OPTIONS_LABELS = { left: "Left", right: "Right", jump: "Jump", activate: "Activate horn", fire: "Fire" };
+// "volume" is an extra row after the rebindable actions - adjusted with
+// Left/Right instead of entering "listening" mode like the others (see
+// awaitingBindFor handling below, which volume skips).
+var OPTIONS_ROWS = OPTIONS_ACTIONS.concat(["volume"]);
+var VOLUME_STEP = 0.1;
 var optionsIndex = 0;
 var optionsEntryRects = [];
 var awaitingBindFor = null;
@@ -65,7 +70,7 @@ var awaitingBindFor = null;
 // calls "a"), unlike e.code which is layout-independent - see
 // player-2d.js's KEY_BINDINGS comment for why both are needed.
 function keyEventToLabel(e) {
-  if (e.code === "Space") return "Espace";
+  if (e.code === "Space") return "Space";
   if (e.key.length === 1) return e.key.toUpperCase();
   return e.key; // e.g. "ArrowLeft", "Control" - shown as-is
 }
@@ -86,9 +91,12 @@ window.addEventListener("keydown", function (e) {
     return;
   }
   if (gameState === "options") {
-    if (e.code === "ArrowUp") optionsIndex = (optionsIndex - 1 + OPTIONS_ACTIONS.length) % OPTIONS_ACTIONS.length;
-    else if (e.code === "ArrowDown") optionsIndex = (optionsIndex + 1) % OPTIONS_ACTIONS.length;
-    else if (e.code === "Space" || e.code === "Enter") awaitingBindFor = OPTIONS_ACTIONS[optionsIndex];
+    var onVolumeRow = OPTIONS_ROWS[optionsIndex] === "volume";
+    if (e.code === "ArrowUp") optionsIndex = (optionsIndex - 1 + OPTIONS_ROWS.length) % OPTIONS_ROWS.length;
+    else if (e.code === "ArrowDown") optionsIndex = (optionsIndex + 1) % OPTIONS_ROWS.length;
+    else if (onVolumeRow && e.code === "ArrowLeft") Audio_.setVolume(Audio_.getVolume() - VOLUME_STEP);
+    else if (onVolumeRow && e.code === "ArrowRight") Audio_.setVolume(Audio_.getVolume() + VOLUME_STEP);
+    else if (!onVolumeRow && (e.code === "Space" || e.code === "Enter")) awaitingBindFor = OPTIONS_ROWS[optionsIndex];
     else if (e.code === "Escape") gameState = "title";
     return;
   }
@@ -136,7 +144,7 @@ canvas.addEventListener("click", function (e) {
       var r2 = optionsEntryRects[j];
       if (mx >= r2.x && mx <= r2.x + r2.w && my >= r2.y && my <= r2.y + r2.h) {
         optionsIndex = j;
-        awaitingBindFor = OPTIONS_ACTIONS[j];
+        if (OPTIONS_ROWS[j] !== "volume") awaitingBindFor = OPTIONS_ROWS[j];
         return;
       }
     }
@@ -758,7 +766,7 @@ function drawHud(ctx) {
     ctx.fillStyle = "#222";
     ctx.font = "16px sans-serif";
     ctx.textAlign = "right";
-    ctx.fillText("Corne obtenue !", boxX + boxSize, boxY + boxSize + 20);
+    ctx.fillText("Horn collected!", boxX + boxSize, boxY + boxSize + 20);
     ctx.textAlign = "left";
   }
 }
@@ -769,9 +777,9 @@ function drawFinishScreen(ctx) {
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
   ctx.font = "48px sans-serif";
-  ctx.fillText("Arrivee !", canvas.width / 2, canvas.height / 2 - 20);
+  ctx.fillText("Finish!", canvas.width / 2, canvas.height / 2 - 20);
   ctx.font = "24px sans-serif";
-  ctx.fillText("Collectibles : " + collected + " / " + (collected + level.collectibles.length), canvas.width / 2, canvas.height / 2 + 30);
+  ctx.fillText("Collectibles: " + collected + " / " + (collected + level.collectibles.length), canvas.width / 2, canvas.height / 2 + 30);
   ctx.textAlign = "left";
 }
 
@@ -783,7 +791,7 @@ function drawPauseScreen(ctx) {
   ctx.font = "48px sans-serif";
   ctx.fillText("Pause", canvas.width / 2, canvas.height / 2 - 20);
   ctx.font = "24px sans-serif";
-  ctx.fillText("Echap pour reprendre", canvas.width / 2, canvas.height / 2 + 30);
+  ctx.fillText("Esc to resume", canvas.width / 2, canvas.height / 2 + 30);
   ctx.textAlign = "left";
 }
 
@@ -811,7 +819,7 @@ function drawGameOverScreen(ctx, time) {
   ctx.fillText("Game Over", canvas.width / 2, canvas.height / 2 - 30);
   ctx.font = "22px sans-serif";
   var blink = Math.sin(time * 3) > 0;
-  if (blink) ctx.fillText("Appuie sur Espace ou clique pour revenir au menu", canvas.width / 2, canvas.height / 2 + 30);
+  if (blink) ctx.fillText("Press Space or click to return to the menu", canvas.width / 2, canvas.height / 2 + 30);
   ctx.textAlign = "left";
 }
 
@@ -832,7 +840,7 @@ function drawTitleScreen(ctx, time) {
 
   ctx.fillStyle = "#fff";
   ctx.font = "bold 64px sans-serif";
-  ctx.fillText("Horse Run", canvas.width / 2, canvas.height * 0.26);
+  ctx.fillText("Rainbow Hoof", canvas.width / 2, canvas.height * 0.26);
 
   // Menu entries: centered stack, current selection highlighted (bigger,
   // yellow, with a pointer arrow) - same visual for keyboard and mouse
@@ -864,11 +872,11 @@ function drawTitleScreen(ctx, time) {
   ctx.fillStyle = "#fff";
   var controlsY = canvas.height - 70;
   ctx.fillText(
-    KEY_BINDINGS.left.label + "/" + KEY_BINDINGS.right.label + " : courir, Fleches aussi",
+    KEY_BINDINGS.left.label + "/" + KEY_BINDINGS.right.label + ": run, arrow keys too",
     canvas.width / 2, controlsY
   );
   ctx.fillText(
-    KEY_BINDINGS.jump.label + " : sauter        " + KEY_BINDINGS.activate.label + " : activer la corne",
+    KEY_BINDINGS.jump.label + ": jump        " + KEY_BINDINGS.activate.label + ": activate horn",
     canvas.width / 2, controlsY + 26
   );
 
@@ -890,31 +898,42 @@ function drawOptionsScreen(ctx, time) {
   ctx.fillText("Options", canvas.width / 2, canvas.height * 0.2);
 
   ctx.font = "18px sans-serif";
-  ctx.fillText("Reglages clavier - Fleches directionnelles marchent toujours en plus", canvas.width / 2, canvas.height * 0.2 + 36);
+  ctx.fillText("Key bindings - arrow keys always work as well", canvas.width / 2, canvas.height * 0.2 + 36);
 
   var rowHeight = 60;
   var startY = canvas.height * 0.2 + 110;
   var labelX = canvas.width / 2 - 140;
   var valueX = canvas.width / 2 + 140;
   optionsEntryRects = [];
-  OPTIONS_ACTIONS.forEach(function (action, i) {
+  OPTIONS_ROWS.forEach(function (row, i) {
     var y = startY + i * rowHeight;
     var selected = i === optionsIndex;
-    var listening = awaitingBindFor === action;
+    var isVolume = row === "volume";
+    var listening = !isVolume && awaitingBindFor === row;
 
     ctx.textAlign = "left";
     ctx.font = selected ? "bold 24px sans-serif" : "22px sans-serif";
     ctx.fillStyle = selected ? "#f2d43d" : "#fff";
-    ctx.fillText(OPTIONS_LABELS[action], labelX, y);
+    ctx.fillText(isVolume ? "Volume" : OPTIONS_LABELS[row], labelX, y);
 
     ctx.textAlign = "right";
-    if (listening) {
+    if (isVolume) {
+      // Simple filled-bar slider, same value range as Audio_.getVolume()
+      // (0..1) - drawn instead of a numeric label to match the visual
+      // style of a settings screen rather than raw text.
+      var barW = 160, barH = 14;
+      var barX = valueX - barW, barY = y - barH * 0.75;
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = selected ? "#f2d43d" : "#ccc";
+      ctx.fillRect(barX, barY, barW * Audio_.getVolume(), barH);
+    } else if (listening) {
       var blink = Math.sin(time * 6) > 0;
       ctx.fillStyle = "#e0463f";
-      ctx.fillText(blink ? "Appuie sur une touche..." : "", valueX, y);
+      ctx.fillText(blink ? "Press a key..." : "", valueX, y);
     } else {
       ctx.fillStyle = selected ? "#f2d43d" : "#ccc";
-      ctx.fillText(KEY_BINDINGS[action].label, valueX, y);
+      ctx.fillText(KEY_BINDINGS[row].label, valueX, y);
     }
 
     var rectH = rowHeight - 10;
@@ -924,7 +943,7 @@ function drawOptionsScreen(ctx, time) {
   ctx.textAlign = "center";
   ctx.font = "16px sans-serif";
   ctx.fillStyle = "#ccc";
-  ctx.fillText("Entree/clic : changer la touche        Echap : retour", canvas.width / 2, startY + OPTIONS_ACTIONS.length * rowHeight + 30);
+  ctx.fillText("Enter/click: rebind key        Left/Right: volume        Esc: back", canvas.width / 2, startY + OPTIONS_ROWS.length * rowHeight + 30);
 
   ctx.shadowBlur = 0;
   ctx.textAlign = "left";

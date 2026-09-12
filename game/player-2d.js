@@ -21,7 +21,7 @@ var JUMP_SPEED = 980;
 var DEFAULT_KEY_BINDINGS = {
   left: { code: "KeyA", label: "A" },
   right: { code: "KeyD", label: "D" },
-  jump: { code: "Space", label: "Espace" },
+  jump: { code: "Space", label: "Space" },
   activate: { code: "KeyE", label: "E" },
   fire: { code: "KeyI", label: "I" },
 };
