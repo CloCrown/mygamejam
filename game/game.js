@@ -147,47 +147,64 @@ canvas.addEventListener("click", function (e) {
 });
 
 var rig = buildHorseRig2D();
-// Body-part groups for independently colored regions (see horse-mesh-2d.js
-// for the full bone list). The torso (spine.001/spine.002/spin.003) has no
-// group of its own and falls through to "body" - the current Blender
-// weight paint models the torso as a blend of the neighboring limb/neck/
-// tail bones rather than giving the spine bones their own dominant weight
-// anywhere, so no code-side split can isolate a real "torso" region until
-// that's repainted (see CLAUDE.md 2D mesh/rig row - any shape/weight
-// change starts in Blender, never edited by hand here).
-var meshSplit = splitTrianglesByBoneGroups(rig, [
-  { name: "toes", bones: ["toe.L", "front_toe.L"] },
-  { name: "legs", bones: ["thigh.L", "foot.L", "front_thigh.L", "front_foot.L"] },
-  { name: "thighs", bones: ["thigh.L", "front_thigh.L"] },
-  { name: "shins", bones: ["foot.L", "front_foot.L"] },
-  { name: "tail", bones: ["tail.001", "tail.002"] },
-  { name: "neck", bones: ["neck"] },
-  { name: "head", bones: ["head"] },
-]);
+rig.updateWorld();
+rig.updateSkin();
 
-// Concats several index groups into one Uint16Array, for drawing a set of
-// same-colored groups as a single fill() call - a separate fill per group
-// leaves a hairline seam at the shared edge (canvas antialiasing at the
-// triangle boundary) even when the color is identical, see drawTris below.
-function concatIndices() {
-  var total = 0;
-  for (var i = 0; i < arguments.length; i++) total += arguments[i].length;
-  var out = new Uint16Array(total);
-  var offset = 0;
-  for (var j = 0; j < arguments.length; j++) {
-    out.set(arguments[j], offset);
-    offset += arguments[j].length;
+// Body-part zones for independently colored regions, classified by each
+// triangle's centroid position in bind-pose mesh-local space (not by which
+// bone its vertices are weighted to - see mesh-split-debug.html, an
+// interactive tool kept in this repo for re-tuning these bounds visually).
+// Splitting by bone weight left gaps: most of a limb's visible triangles
+// near the hip/shoulder are actually dominantly weighted to the torso
+// bones in the current Blender export, not to the limb bones, so a
+// bone-based split of "thighs" recovered only a handful of sliver
+// triangles instead of the full limb shape. Zone bounds were tuned by eye
+// in mesh-split-debug.html against this exact mesh export - if the mesh
+// changes (re-export from Blender), re-tune there and paste the new
+// bounds back in.
+var HORSE_ZONES = [
+  { name: "toe", color: "#3d7fb8", xMin: 0.21, xMax: 0.38, yMin: 0.03, yMax: 0.15 },
+  { name: "frontToe", color: "#1a3f5c", xMin: -0.39, xMax: -0.1, yMin: 0.03, yMax: 0.15 },
+  { name: "foot", color: "#e08030", xMin: -0.39, xMax: -0.1, yMin: 0.15, yMax: 0.31 },
+  { name: "frontFoot", color: "#8a4c1a", xMin: 0.1, xMax: 0.45, yMin: 0.15, yMax: 0.31 },
+  { name: "thighs", color: "#ffb347", xMin: -0.53, xMax: 0.45, yMin: 0.31, yMax: 0.47 },
+  { name: "tail", color: "#00aa00", xMin: 0.44, xMax: 0.8, yMin: 0.1, yMax: 0.99 },
+  { name: "neck", color: "#cccc00", xMin: -0.32, xMax: -0.1, yMin: 0.75, yMax: 0.99 },
+  { name: "head", color: "#00aaaa", xMin: -0.53, xMax: -0.35, yMin: 0.745, yMax: 0.92 },
+  { name: "horn", color: "#ff6699", xMin: -0.53, xMax: -0.325, yMin: 0.92, yMax: 0.994 },
+];
+var BODY_COLOR = "#c98a52";
+
+// Classifies each triangle by its bind-pose centroid, not by skinned
+// (animated) position - so the split is stable regardless of pose, same
+// approach as mesh-split-debug.html's computeZoneSplit(). A triangle falls
+// in the first zone (in list order) whose box contains its centroid;
+// anything unmatched stays in "body" (the implicit leftover group, mostly
+// torso).
+function splitTrianglesByZones(rig, zones) {
+  var pos = HORSE_SKIN_2D.positions;
+  var idx = rig.indices;
+  var result = { body: [] };
+  zones.forEach(function (z) { result[z.name] = []; });
+  for (var t = 0; t < idx.length; t += 3) {
+    var ia = idx[t], ib = idx[t + 1], ic = idx[t + 2];
+    var cx = (pos[ia * 2] + pos[ib * 2] + pos[ic * 2]) / 3;
+    var cy = (pos[ia * 2 + 1] + pos[ib * 2 + 1] + pos[ic * 2 + 1]) / 3;
+    var matched = false;
+    for (var z = 0; z < zones.length; z++) {
+      var zn = zones[z];
+      if (cx >= zn.xMin && cx <= zn.xMax && cy >= zn.yMin && cy <= zn.yMax) {
+        result[zn.name].push(ia, ib, ic);
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) result.body.push(ia, ib, ic);
   }
-  return out;
+  Object.keys(result).forEach(function (k) { result[k] = new Uint16Array(result[k]); });
+  return result;
 }
-
-// Default single-color silhouette (everything but the sabots, which stay
-// a contrasting color) - all the individually-selectable groups above,
-// merged back into one fill so the default look has no internal seams.
-var MESH_SKIN_TAN = concatIndices(
-  meshSplit.body, meshSplit.legs,
-  meshSplit.tail, meshSplit.neck, meshSplit.head
-);
+var meshSplit = splitTrianglesByZones(rig, HORSE_ZONES);
 
 // Rig/mesh authored in Blender units, ~0.96 units tall after the latest
 // re-export (clean contour Fill + Beautify, then rescaled in Blender - see
@@ -398,12 +415,31 @@ function drawHorse(ctx, screenX, screenY, facingRight, time) {
   // over ~0.15s around takeoff/landing instead of snapping, using onGround
   // as the on/off signal (see player-2d.js for jump/gravity handling).
   var jumpBlend = player.onGround ? 0 : 1;
+  // Far pass: legs only (thigh+foot+toe zones), phase-shifted and slightly
+  // offset to suggest depth, drawn once in a single flat leg color -
+  // matches the original two-pass "near/far legs" look instead of
+  // recoloring the far legs per zone too (that would look like 2 horses).
   animateHorseRig2DWithJump(rig, time, speed, FAR_LEG_PHASE_OFFSET_2D, jumpBlend);
-  drawTris(meshSplit.legs, -4, -2, "#a9713f");
-  drawTris(meshSplit.toes, -4, -2, "#2d5f8a");
+  drawTris(meshSplit.thighs, -4, -2, "#a9713f");
+  drawTris(meshSplit.foot, -4, -2, "#a9713f");
+  drawTris(meshSplit.frontFoot, -4, -2, "#a9713f");
+  drawTris(meshSplit.toe, -4, -2, "#2d5f8a");
+  drawTris(meshSplit.frontToe, -4, -2, "#2d5f8a");
+
+  // Near pass: every zone drawn separately with its own color (see
+  // HORSE_ZONES above) so each can be recolored independently later (e.g.
+  // per horn power-up) - same base color for all of them by default.
   animateHorseRig2DWithJump(rig, time, speed, 0, jumpBlend);
-  drawTris(MESH_SKIN_TAN, 0, 0, "#c98a52");
-  drawTris(meshSplit.toes, 0, 0, "#3d7fb8");
+  drawTris(meshSplit.body, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.thighs, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.foot, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.frontFoot, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.tail, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.neck, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.head, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.horn, 0, 0, BODY_COLOR);
+  drawTris(meshSplit.toe, 0, 0, "#3d7fb8");
+  drawTris(meshSplit.frontToe, 0, 0, "#3d7fb8");
 
   ctx.restore();
 }

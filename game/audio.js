@@ -14,9 +14,31 @@
 
 var Audio_ = (function () {
   var audioCtx = null;
+  var masterGain = null;
+  var volume = 1;
+  try {
+    var savedVol = localStorage.getItem("volume");
+    if (savedVol !== null) volume = Math.max(0, Math.min(1, parseFloat(savedVol)));
+  } catch (e) {}
+
   function ctx() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = volume;
+      masterGain.connect(audioCtx.destination);
+    }
     return audioCtx;
+  }
+
+  function setVolume(v) {
+    volume = Math.max(0, Math.min(1, v));
+    if (masterGain) masterGain.gain.value = volume;
+    try { localStorage.setItem("volume", volume); } catch (e) {}
+  }
+
+  function getVolume() {
+    return volume;
   }
 
   // zzfxG(...) synthesizes one sound effect into a sample array.
@@ -60,7 +82,7 @@ var Audio_ = (function () {
     for (var i = 0; i < buf.length; i++) data[i] = Math.max(-1, Math.min(1, buf[i]));
     var src = c.createBufferSource();
     src.buffer = buffer;
-    src.connect(c.destination);
+    src.connect(masterGain);
     src.start();
   }
 
@@ -110,5 +132,5 @@ var Audio_ = (function () {
     musicTimer = setInterval(playMusicStep, MUSIC_NOTE_MS);
   }
 
-  return { play: play, startMusic: startMusic };
+  return { play: play, startMusic: startMusic, setVolume: setVolume, getVolume: getVolume };
 })();

@@ -166,13 +166,18 @@ function splitTrianglesByBoneGroups(rig, groups) {
     dominantBone[v] = (b >= 0 && rig.weightB[v] > rig.weightA[v]) ? b : rig.boneA[v];
   }
 
+  // A triangle joins a group when at least 2 of its 3 corners belong to it
+  // (majority vote), not all 3 - requiring all 3 left gaps in the silhouette
+  // at every seam between a limb and the torso, since a triangle straddling
+  // that seam always has at least one corner classified on the other side.
   var idx = rig.indices;
   for (var t = 0; t < idx.length; t += 3) {
     var ia = idx[t], ib = idx[t + 1], ic = idx[t + 2];
     var matched = false;
     for (var g = 0; g < groups.length; g++) {
       var set = groupBoneSets[g];
-      if (set[dominantBone[ia]] && set[dominantBone[ib]] && set[dominantBone[ic]]) {
+      var votes = (set[dominantBone[ia]] ? 1 : 0) + (set[dominantBone[ib]] ? 1 : 0) + (set[dominantBone[ic]] ? 1 : 0);
+      if (votes >= 2) {
         result[groups[g].name].push(ia, ib, ic);
         matched = true;
         break;
