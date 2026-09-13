@@ -291,6 +291,8 @@ var SHRINK_SCALE = 0.55;
 var hornInvincibleTime = 0; // yellow: separate from the post-hit invulnerableTime
 var HORN_INVINCIBLE_DURATION = 5;
 var SUPER_JUMP_MULTIPLIER = 1.5;
+var eatMonstersTime = 0; // violet: tier 1 monster contact eats it instead of hurting
+var EAT_MONSTERS_DURATION = 5;
 var projectiles = []; // { x, y, w, h, vx }, red horn's fired shots
 var PROJECTILE_SPEED = 900;
 var PROJECTILE_SIZE = 20;
@@ -300,9 +302,7 @@ var wasFireDown = false;
 // see horn-item-2d.js). Each `apply` runs once when that horn is consumed
 // (E key). `zone` (a key into meshSplit, or null) is the body-part region
 // drawHorse recolors with that horn's color while the matching state above
-// is active - see the "while active" checks in drawHorse. Violet has no
-// effect yet - not designed, left as a no-op placeholder like the others
-// were, see CLAUDE.md "Périmètre par tâche".
+// is active - see the "while active" checks in drawHorse.
 var HORN_EFFECTS = [
   {
     name: "rouge", zone: "horn",
@@ -317,8 +317,10 @@ var HORN_EFFECTS = [
     apply: function () { hornInvincibleTime = HORN_INVINCIBLE_DURATION; },
   },
   {
+    // Fills an empty heart (lives+1) - never changes maxLives. Repairing a
+    // destroyed slot (maxLives) is the violet horn's job, not this one.
     name: "vert", zone: null,
-    apply: function () { lives = Math.min(lives + 1, MAX_LIVES); },
+    apply: function () { lives = Math.min(lives + 1, maxLives); },
   },
   {
     name: "bleu", zone: "toe",
@@ -328,7 +330,16 @@ var HORN_EFFECTS = [
     name: "indigo", zone: "head",
     apply: function () { shrinkTime = SHRINK_DURATION; },
   },
-  { name: "violet", zone: null, apply: function () {} },
+  {
+    // Timed: while active, touching a tier 1 monster eats it (destroys it,
+    // repairs a heart slot - maxLives+1, capped at MAX_LIVES_CAP) instead
+    // of hurting the player - see checkObstacleHit. Eating never fills a
+    // heart (that's green's job) - it only restores a slot destroyed by a
+    // tier 2 monster. Tier 2 monsters are unaffected by this effect (still
+    // destroy a slot on contact even while active).
+    name: "violet", zone: "horn",
+    apply: function () { eatMonstersTime = EAT_MONSTERS_DURATION; },
+  },
 ];
 
 // Index into HORN_COLORS of the most recently activated horn - drives
@@ -458,19 +469,50 @@ var OBSTACLE_TYPES = {
   },
 };
 
-// ---- Lives / damage: 3 hearts, lost on contact with an obstacle or
+// ---- Lives / damage: hearts, lost on contact with an obstacle or a tier 1
 // monster. invulnerableTime blocks further hits for a beat after one lands
 // (both to give the player room to get clear and so a single prolonged
 // overlap doesn't chain-drain every heart at once), decremented in loop().
+//
+// maxLives is the number of heart *slots* available right now - separate
+// from lives (how many of those slots are currently filled). It starts at
+// STARTING_MAX_LIVES and can move independently of lives:
+// - green horn fills an empty slot (lives+1, capped at maxLives) - see
+//   HORN_EFFECTS below - it never changes maxLives.
+// - a tier 2 monster destroys a slot outright (maxLives-1, see
+//   checkObstacleHit) - lives is clamped down with it if it was using
+//   that slot, and a destroyed slot renders as absent (not just empty) in
+//   drawHud, not refillable by the green horn until repaired.
+// - violet horn's "eat" effect repairs a destroyed slot (maxLives+1,
+//   capped at MAX_LIVES_CAP) without filling it, when a tier 1 monster is
+//   touched while eatMonstersTime is active - see checkObstacleHit.
 // ----
-var MAX_LIVES = 3;
-var lives = MAX_LIVES;
+var STARTING_MAX_LIVES = 3;
+var MAX_LIVES_CAP = 7;
+var maxLives = STARTING_MAX_LIVES;
+var lives = STARTING_MAX_LIVES;
 var invulnerableTime = 0;
 var INVULNERABLE_DURATION = 1.5;
 
 function takeHit() {
   if (invulnerableTime > 0 || hornInvincibleTime > 0) return;
   lives--;
+  invulnerableTime = INVULNERABLE_DURATION;
+  hitFlashTime = 0.2;
+  Audio_.play("hit");
+  if (lives <= 0) {
+    gameState = "gameover";
+    Audio_.play("gameOver");
+  }
+}
+
+// Tier 2 monster contact: destroys a heart slot instead of just emptying
+// one - maxLives drops, and lives is clamped down with it if it was
+// filling that now-gone slot (can't have more filled hearts than slots).
+function destroyHeartSlot() {
+  if (invulnerableTime > 0 || hornInvincibleTime > 0) return;
+  maxLives = Math.max(0, maxLives - 1);
+  lives = Math.min(lives, maxLives);
   invulnerableTime = INVULNERABLE_DURATION;
   hitFlashTime = 0.2;
   Audio_.play("hit");
@@ -504,10 +546,18 @@ function checkObstacleHit() {
     }
   }
   for (var j = 0; j < monsters.length; j++) {
-    if (aabbOverlap(player, monsters[j])) {
-      takeHit();
+    var m = monsters[j];
+    if (!aabbOverlap(player, m)) continue;
+
+    if (m.tier === 1 && eatMonstersTime > 0) {
+      monsters.splice(j, 1);
+      maxLives = Math.min(maxLives + 1, MAX_LIVES_CAP);
+      Audio_.play("pickup");
       return;
     }
+    if (m.tier === 2) destroyHeartSlot();
+    else takeHit();
+    return;
   }
 }
 
@@ -536,7 +586,8 @@ function isHornEffectActive(colorIndex) {
     case 2: return hornInvincibleTime > 0;
     case 4: return speedBoostTime > 0;
     case 5: return shrinkTime > 0;
-    default: return false; // green/violet: instant or no effect, never "active"
+    case 6: return eatMonstersTime > 0;
+    default: return false; // green: instant, never "active"
   }
 }
 
@@ -739,20 +790,16 @@ function drawHud(ctx) {
   // window during which further hits don't cost another heart.
   var heartSize = 30;
   var flashing = invulnerableTime > 0 && Math.sin(invulnerableTime * 20) > 0;
-  for (var i = 0; i < MAX_LIVES; i++) {
+  for (var i = 0; i < maxLives; i++) {
     if (flashing) continue;
     drawHeart(ctx, 16 + i * (heartSize + 6) + heartSize / 2, 16 + heartSize / 2, heartSize, i < lives);
   }
 
-  ctx.fillStyle = "#222";
-  ctx.font = "20px sans-serif";
-  ctx.fillText("Collectibles: " + collected + " / " + (collected + level.collectibles.length), 16, 65);
-
-  // Owned-horn box, fixed top-right: empty slot outline when nothing owned
-  // yet, otherwise the current horn drawn inside it.
+  // Owned-horn box, top-left under the hearts: empty slot outline when
+  // nothing owned yet, otherwise the current horn drawn inside it.
   var boxSize = 64;
-  var boxX = canvas.width - boxSize - 16;
-  var boxY = 16;
+  var boxX = 16;
+  var boxY = 16 + heartSize + 12;
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.fillRect(boxX, boxY, boxSize, boxSize);
   ctx.strokeStyle = "#333";
@@ -762,12 +809,14 @@ function drawHud(ctx) {
     drawHornItem(ctx, boxX + boxSize / 2, boxY + boxSize / 2, boxSize * 0.7, ownedHorn, 0);
   }
 
+  ctx.fillStyle = "#222";
+  ctx.font = "20px sans-serif";
+  ctx.fillText("Collectibles: " + collected + " / " + (collected + level.collectibles.length), 16, boxY + boxSize + 24);
+
   if (hornPopupTime > 0) {
     ctx.fillStyle = "#222";
     ctx.font = "16px sans-serif";
-    ctx.textAlign = "right";
-    ctx.fillText("Horn collected!", boxX + boxSize, boxY + boxSize + 20);
-    ctx.textAlign = "left";
+    ctx.fillText("Horn collected!", boxX + boxSize + 12, boxY + boxSize / 2 + 6);
   }
 }
 
@@ -803,8 +852,16 @@ function resetGame() {
   collected = 0;
   ownedHorn = -1;
   hornPopupTime = 0;
-  lives = MAX_LIVES;
+  maxLives = STARTING_MAX_LIVES;
+  lives = STARTING_MAX_LIVES;
   invulnerableTime = 0;
+  fireReady = false;
+  superJumpReady = false;
+  speedBoostTime = 0;
+  shrinkTime = 0;
+  hornInvincibleTime = 0;
+  eatMonstersTime = 0;
+  projectiles = [];
   camX = 0;
   level = buildLevel1(level.groundY);
   monsters = level.monsterDefs.map(createMonster);
@@ -998,6 +1055,7 @@ function loop(ts) {
     checkFinish();
     if (speedBoostTime > 0) speedBoostTime -= dt;
     if (shrinkTime > 0) shrinkTime -= dt;
+    if (eatMonstersTime > 0) eatMonstersTime -= dt;
     if (hitFlashTime > 0) hitFlashTime -= dt;
     if (hornPopupTime > 0) hornPopupTime -= dt;
     if (invulnerableTime > 0) invulnerableTime -= dt;

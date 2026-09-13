@@ -9,11 +9,23 @@
 
 var MONSTER_SPEED = 90; // px/s
 
-// def: { x, y, w, h, patrolDistance } - x/y/w/h is the spawn rect, the
-// monster patrols within [x - patrolDistance, x + patrolDistance].
+// tier 2 monsters are a bigger, tougher variant of the same patrol
+// behavior (not a new movement pattern, so kept in this file rather than
+// a separate monster-<name>-2d.js - see CLAUDE.md perimeter table: a new
+// file is for different *behavior*, this is just a size/damage variant).
+// tier 1 costs the player a heart on contact (lives-1); tier 2 destroys a
+// heart slot outright (maxLives-1) - see game.js's checkObstacleHit.
+var MONSTER_TIER_SCALE = { 1: 1, 2: 1.4 };
+
+// def: { x, y, w, h, patrolDistance, tier } - x/y/w/h is the spawn rect
+// (w/h scaled by MONSTER_TIER_SCALE[tier]), tier defaults to 1 when
+// omitted, the monster patrols within [x - patrolDistance, x + patrolDistance].
 function createMonster(def) {
+  var tier = def.tier || 1;
+  var scale = MONSTER_TIER_SCALE[tier];
   return {
-    x: def.x, y: def.y, w: def.w, h: def.h,
+    x: def.x, y: def.y, w: def.w * scale, h: def.h * scale,
+    tier: tier,
     minX: def.x - def.patrolDistance,
     maxX: def.x + def.patrolDistance,
     vx: MONSTER_SPEED,
@@ -46,21 +58,26 @@ function drawMonster(ctx, monster, camX) {
   ctx.translate(0, bob);
 
   var rx = monster.w / 2, ry = monster.h / 2;
+  // Tier 2 is a deeper red instead of purple - a readable "this one's
+  // dangerous" cue distinct from its bigger size (see MONSTER_TIER_SCALE).
+  var bodyColor = monster.tier === 2 ? "#7a2a2a" : "#5a2d6e";
+  var bellyColor = monster.tier === 2 ? "#b04848" : "#8a4fae";
+  var hornColor = monster.tier === 2 ? "#3a1010" : "#3a1a48";
 
   // Body: squat rounded blob.
   ctx.beginPath();
   ctx.ellipse(0, ry * 0.1, rx, ry * 0.85, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#5a2d6e";
+  ctx.fillStyle = bodyColor;
   ctx.fill();
 
   // Belly patch, lighter.
   ctx.beginPath();
   ctx.ellipse(0, ry * 0.35, rx * 0.55, ry * 0.45, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#8a4fae";
+  ctx.fillStyle = bellyColor;
   ctx.fill();
 
   // Two small horns on top.
-  ctx.fillStyle = "#3a1a48";
+  ctx.fillStyle = hornColor;
   ctx.beginPath();
   ctx.moveTo(-rx * 0.4, -ry * 0.6);
   ctx.lineTo(-rx * 0.55, -ry * 1.1);
