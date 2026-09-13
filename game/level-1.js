@@ -71,11 +71,26 @@ function buildLevel1(groundY) {
       w: 44, h: 44,
     });
 
-    monsterDefs.push({
-      x: base + 150 + (i % 3) * 250,
-      y: groundY - 65, w: 65, h: 65,
-      patrolDistance: 100 + (i % 4) * 30,
-    });
+    // Skip the very first monster spawn (i === 0 would land right on top
+    // of the player's start position, x=100 in game.js) - gives the
+    // player a safe stretch to get moving before the first enemy shows up.
+    if (i > 0) {
+      monsterDefs.push({
+        x: base + 150 + (i % 3) * 250,
+        y: groundY - 65, w: 65, h: 65,
+        patrolDistance: 100 + (i % 4) * 30,
+        tier: 1,
+      });
+    }
+    // Tougher tier 2 every third chunk (destroys a heart slot on contact
+    // instead of just costing a heart - see game.js's checkObstacleHit).
+    if (i % 3 === 2) {
+      monsterDefs.push({
+        x: base + 1250, y: groundY - 65, w: 65, h: 65,
+        patrolDistance: 120,
+        tier: 2,
+      });
+    }
   }
 
   return {
